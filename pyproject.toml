@@ -1,0 +1,20 @@
+[build-system]
+requires = ["uv_build >= 0.9.18, <0.10.0"]
+build-backend = "uv_build"
+
+[project]
+name = "introduction_to_world_model"
+version = "0.0.0"
+description = "Implement world models to learn MiniWorld environments."
+requires-python = ">=3.10"
+
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+
+authors = [{ name = "Duc Tai Nguyen", email = "ductaingn.015203@gmail.com" }]
+
+maintainers = [
+  { name = "Duc Tai Nguyen", email = "ductaingn.015203@gmail.com" },
+]
+
+dependencies = ["numpy", "gymnasium", "torch"]
