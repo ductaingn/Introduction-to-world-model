@@ -37,7 +37,7 @@ class Env(gym.Env):
 
         self.observation_space: gym.spaces.Box = gym.spaces.Box(
             low=0.0,
-            high=255.0,
+            high=1.0,
             shape=padded_shape,
             dtype=np.float32,
         )
@@ -57,13 +57,13 @@ class Env(gym.Env):
         options: dict[str, Any] | None = None,
     ):
         obs, info = self._env.reset(seed=seed, options=options)
-        obs = self._pad_obs(obs["obs"])
+        obs = self._pad_obs(obs["obs"].astype(np.float32)) / 255.0  # Normalize
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self._env.step(action)
 
-        obs = self._pad_obs(obs["obs"])
+        obs = self._pad_obs(obs["obs"].astype(np.float32)) / 255.0  # Normalize
 
         return (
             obs,
