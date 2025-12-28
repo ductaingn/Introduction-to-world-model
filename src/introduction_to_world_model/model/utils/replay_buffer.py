@@ -65,7 +65,7 @@ class ReplayBuffer:
     def get_batch(
         self, batch_indices: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        if len(self.obs) < batch_indices.max():
+        if len(self) <= batch_indices.max():
             raise RuntimeError("Batch indices is greater than length of buffer!")
 
         return (
@@ -75,6 +75,53 @@ class ReplayBuffer:
             np.array(self.reward)[batch_indices],
             np.array(self.terminated)[batch_indices],
             np.array(self.truncated)[batch_indices],
+        )
+
+    def get_rollout_batch(
+        self,
+        batch_indices: np.ndarray,
+        time_length: int,
+        next_z: np.ndarray,
+        z_indices: np.ndarray,
+    ) -> Tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+    ]:
+        """
+        Parameters:
+        next_z: np.ndarray
+            The latent vector of the next observation comes from the Vision Model, corresponding to the batch_indices
+        """
+        max_index = batch_indices.max() + time_length
+        if len(self) <= max_index:
+            raise RuntimeError("Batch indices is greater than length of buffer!")
+
+        # Shape: (B, T)
+        time_offsets = np.arange(time_length)
+        rollout_indices = batch_indices[:, None] + time_offsets[None, :]
+        z_rollout_indices = z_indices[:, None] + time_offsets[None, :]
+
+        # Convert buffers once
+        obs = np.asarray(self.obs)
+        next_obs = np.asarray(self.next_obs)
+        act = np.asarray(self.act)
+        reward = np.asarray(self.reward)
+        terminated = np.asarray(self.terminated)
+        truncated = np.asarray(self.truncated)
+
+        return (
+            obs[rollout_indices],
+            next_obs[rollout_indices],
+            act[rollout_indices],
+            reward[rollout_indices],
+            terminated[rollout_indices],
+            truncated[rollout_indices],
+            next_z[z_rollout_indices],
         )
 
     def sample(

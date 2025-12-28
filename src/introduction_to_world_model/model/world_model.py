@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import attrs
 
 import numpy as np
@@ -21,7 +23,7 @@ from .utils.replay_buffer import ReplayBuffer
 
 @attrs.define
 class WorldModel:
-    observation_space: gym.spaces.Dict
+    observation_space: gym.spaces.Box
     action_space: gym.spaces.Discrete
     replay_buffer_size: int = 10000
     vision_model: ConvVAE = attrs.field(init=False)
@@ -38,6 +40,16 @@ class WorldModel:
             self.action_space,
         )
         self.replay_buffer = ReplayBuffer(self.replay_buffer_size)
+
+    def to(self, device: str = "cpu"):
+        self.vision_model.to(device)
+        self.reasoning_model.to(device)
+        self.policy_model.to(device)
+
+    def train(self, train: bool = True):
+        self.vision_model.train(train)
+        self.reasoning_model.train(train)
+        self.policy_model.train(train)
 
     def act(self, obs: torch.Tensor, h: torch.Tensor):
         z = self.vision_model.encode(obs)
@@ -62,7 +74,7 @@ class WorldModel:
                 self.replay_buffer.add(
                     obs.astype(np.float32),
                     next_obs.astype(np.float32),
-                    np.eye(int(self.action_space.n))[action],
+                    np.eye(int(self.action_space.n))[action].astype(np.float32), # One-hot encoding
                     np.array(reward).astype(np.float32),
                     np.array(terminated).astype(np.float32),
                     np.array(truncated).astype(np.float32),
@@ -73,7 +85,7 @@ class WorldModel:
 
     def save_checkpoint(
         self,
-        path: str,
+        path: str | Path,
         *,
         vision_optimizer: torch.optim.Optimizer | None = None,
         reasoning_optimizer: torch.optim.Optimizer | None = None,
@@ -103,7 +115,14 @@ class WorldModel:
         if policy_optimizer is not None:
             checkpoint["policy_optimizer"] = policy_optimizer.state_dict()
 
-        torch.save(checkpoint, path)
+        try:
+            print(f"Saving model to {path}")
+            save_path = Path(path)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(checkpoint, save_path)
+        except Exception as e:
+            print("Error occurred while saving model!")
+            print(e)
 
     def load_checkpoint(
         self,
@@ -114,7 +133,14 @@ class WorldModel:
         policy_optimizer: torch.optim.Optimizer | None = None,
         device: torch.device | str | None = None,
     ) -> None:
-        checkpoint = torch.load(path, map_location=device)
+        try:
+            print(f"Loading model from {path}")
+            checkpoint = torch.load(path, weights_only=False, map_location=device)
+        except Exception as e:
+            print("Error occurred while loading model!")
+            print(e)
+
+            return
 
         # ---- models ----
         self.vision_model.load_state_dict(checkpoint["vision_model"])

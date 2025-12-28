@@ -3,7 +3,7 @@ from typing import Tuple
 import gymnasium as gym
 import torch
 import torch.nn as nn
-from torch.nn.functional import mse_loss, binary_cross_entropy
+from torch.nn.functional import mse_loss, binary_cross_entropy_with_logits
 
 
 class MixtureDensityHead(nn.Module):
@@ -31,31 +31,32 @@ class MixtureDensityHead(nn.Module):
 
         mu = mu.view(-1, self.num_mixture, self.z_size)
         log_std = log_std.view(-1, self.num_mixture, self.z_size)
-        log_weights = log_weights.view(-1, self.num_mixture, 1)
         log_weights = torch.log_softmax(log_weights, dim=-1)
+        log_weights = log_weights.unsqueeze(-1)        # (B*T, K, 1)
 
         return mu, log_std, log_weights
 
 
 def mdn_loss(
     z_target: torch.Tensor,
-    mu: torch.Tensor,
-    log_std: torch.Tensor,
-    log_weights: torch.Tensor,
+    mu_predict: torch.Tensor,
+    log_std_predict: torch.Tensor,
+    log_weights_predict: torch.Tensor,
 ) -> torch.Tensor:
     """
-    z_target: (B*T, z_size)
+    z_target: (B, T, z_size)
     mu: (B*T, num_mixture, z_size)
     log_std: (B*T, num_mixture, z_size)
     log_weights: (B*T, num_mixture)
     """
+    z_target = z_target.view(-1, 1, z_target.size(-1))  # (B*T, 1, z_size)
     log_prob = (
-        -0.5 * (((z_target - mu) / log_std.exp()) ** 2)
-        - log_std
+        -0.5 * (((z_target - mu_predict) / log_std_predict.exp()) ** 2)
+        - torch.clamp(log_std_predict, -7, 7)
         - 0.5 * torch.log(torch.tensor(torch.pi * 2))
     ).sum(dim=-1)
 
-    log_prob = log_prob + log_weights
+    log_prob = log_prob + log_weights_predict.squeeze(-1)
     nll = -torch.logsumexp(log_prob, dim=-1)
 
     return nll.mean()
@@ -131,19 +132,19 @@ class MDNRNN(nn.Module):
         mu_predict: torch.Tensor,
         log_std_predict: torch.Tensor,
         log_weights_predict: torch.Tensor,
-        r_target: torch.Tensor,
-        r_predict: torch.Tensor,
-        done_target: torch.Tensor,
-        done_predict: torch.Tensor,
+        r_target: torch.Tensor | None,
+        r_predict: torch.Tensor | None,
+        done_target: torch.Tensor | None,
+        done_predict: torch.Tensor | None,
     ) -> torch.Tensor:
         # TODO: Implement mask
         loss = mdn_loss(z_target, mu_predict, log_std_predict, log_weights_predict)
 
-        if self.predict_reward:
-            loss += mse_loss(r_predict, r_target)
+        if self.predict_reward and r_target is not None and r_predict is not None:
+            loss += mse_loss(r_predict, r_target.view(-1, 1))
 
-        if self.predict_done:
-            loss += binary_cross_entropy(done_predict, done_target)
+        if self.predict_done and done_target is not None and done_predict is not None:
+            loss += binary_cross_entropy_with_logits(done_predict, done_target.view(-1, 1))
 
         return loss
 
@@ -161,8 +162,10 @@ if __name__ == "__main__":
 
     # actions (one-hot)
     a = torch.nn.functional.one_hot(
-        torch.tensor(action_space.sample()), num_classes=int(action_space.n)
-    ).float()
+            torch.tensor([action_space.sample() for i in range(B*T)]),
+            num_classes=action_space.n
+        ).float().view(B, T, -1)
+
 
     mu, log_std, log_weights, h, r, d = mdnrnn(z, a)
 

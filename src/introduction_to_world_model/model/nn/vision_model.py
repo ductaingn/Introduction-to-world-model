@@ -178,8 +178,6 @@ class ConvVAE(nn.Module):
     def calculate_loss(
         self, obs, reconstructed_img, mu, log_var
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        print(f"obs shape: {obs.shape}")
-        print(f"reconstructed_img shape: {reconstructed_img.shape}")
         reconstruction_loss = F.mse_loss(input=reconstructed_img, target=obs)
         kld_loss = torch.mean(
             -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=-1)
