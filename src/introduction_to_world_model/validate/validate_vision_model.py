@@ -46,8 +46,8 @@ def validate_vision_model(
     for img in obs:
         with torch.no_grad():
             reconstructed_img, _, _ = agent.vision_model.forward(img.unsqueeze(0))
-        reconstructed_img = reconstructed_img.squeeze(0).numpy()
-        img = img.numpy()
+        reconstructed_img = (reconstructed_img.squeeze(0).numpy() + 1.0) / 2.0
+        img = (img.numpy() + 1.0) / 2.0
 
         # Convert tensors to numpy for plotting
         # Create the figure
