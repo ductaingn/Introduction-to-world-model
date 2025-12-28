@@ -9,6 +9,7 @@ from rich.progress import (
     BarColumn,
     TaskProgressColumn,
     TimeRemainingColumn,
+    TimeElapsedColumn,
 )
 
 from introduction_to_world_model.model.world_model import WorldModel
@@ -42,6 +43,7 @@ def train_vision_model(
         TaskProgressColumn(),
         TextColumn("[bold]{task.completed}/{task.total}"),
         TimeRemainingColumn(),
+        TimeElapsedColumn(),
         TextColumn("{task.fields[loss_info]}"),
     ) as progress:
         episode_task = progress.add_task(

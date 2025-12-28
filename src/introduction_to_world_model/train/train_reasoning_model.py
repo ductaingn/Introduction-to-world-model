@@ -10,6 +10,7 @@ from rich.progress import (
     BarColumn,
     TaskProgressColumn,
     TimeRemainingColumn,
+    TimeElapsedColumn,
 )
 
 from introduction_to_world_model.model.world_model import WorldModel
@@ -20,7 +21,9 @@ def get_rollout_batch_with_z(
     agent: WorldModel, batch_indices: np.ndarray, rollout_time_length: int, device: str
 ):
     # To predict the future latent z, we have to infer the future observations, hence the `batch_indices_future`
-    batch_indices_future = np.arange(batch_indices[0], batch_indices[-1] + rollout_time_length)
+    batch_indices_future = np.arange(
+        batch_indices[0], batch_indices[-1] + rollout_time_length
+    )
     batch = agent.replay_buffer.get_batch(batch_indices_future)
 
     next_obs_img = batch[1]
@@ -70,6 +73,7 @@ def train_reasoning_model(
         TaskProgressColumn(),
         TextColumn("[bold]{task.completed}/{task.total}"),
         TimeRemainingColumn(),
+        TimeElapsedColumn(),
         TextColumn("{task.fields[loss_info]}"),
     ) as progress:
         episode_task = progress.add_task(
@@ -80,7 +84,9 @@ def train_reasoning_model(
 
         print("Training reasoning model...")
         for ep in range(n_episodes):
-            n_step = len(agent.replay_buffer) // batch_size - rollout_time_length # Prevent out of bound because we need to ensure the future observation are observable within out dataset
+            n_step = (
+                len(agent.replay_buffer) // batch_size - rollout_time_length
+            )  # Prevent out of bound because we need to ensure the future observation are observable within out dataset
 
             step_task = progress.add_task(
                 "[cyan]Step",
@@ -137,6 +143,7 @@ def train_reasoning_model(
 
     if save_path is not None:
         agent.save_checkpoint(save_path, vision_optimizer=optimizer)
+
 
 if __name__ == "__main__":
     env = Env()
