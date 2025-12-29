@@ -19,8 +19,8 @@ class ConvVAE(nn.Module):
     def __init__(
         self,
         obs_space: gym.spaces.Box,
-        hidden_dims: List = [32, 64, 128],
-        latent_dim: int = 128,
+        hidden_dims: List = [32, 64, 128, 256],
+        latent_dim: int = 64,
         *args,
         **kwargs,
     ) -> None:
@@ -48,7 +48,6 @@ class ConvVAE(nn.Module):
                         stride=stride,
                         padding=padding,
                     ),
-                    nn.BatchNorm2d(hidden_dim),
                     nn.ReLU(),
                 )
             )
@@ -87,7 +86,6 @@ class ConvVAE(nn.Module):
                         padding=padding,
                         output_padding=padding,
                     ),
-                    nn.BatchNorm2d(hidden_dims[i + 1]),
                     nn.ReLU(),
                 )
             )
@@ -102,7 +100,7 @@ class ConvVAE(nn.Module):
                     padding=padding,
                     output_padding=padding,
                 ),
-                nn.BatchNorm2d(hidden_dims[-1]),
+                nn.ReLU(),
                 nn.Conv2d(
                     in_channels=hidden_dims[-1],
                     out_channels=3,
@@ -176,20 +174,31 @@ class ConvVAE(nn.Module):
         return samples
 
     def calculate_loss(
-        self, obs, reconstructed_img, mu, log_var
+        self,
+        obs: torch.Tensor,
+        reconstructed_img: torch.Tensor,
+        mu: torch.Tensor,
+        log_var: torch.Tensor,
+        beta: float = 0.01,
+        kl_tolerance: float = 0.5,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        reconstruction_loss = F.mse_loss(input=reconstructed_img, target=obs)
-        kld_loss = torch.mean(
-            -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=-1)
-        )
-        loss = reconstruction_loss + kld_loss
+        reconstruction_loss = torch.sum(
+            (reconstructed_img - obs) ** 2, dim=[1, 2, 3]
+        ).mean()
+        kld_loss = -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=-1)
+        kld_loss = torch.maximum(
+            kld_loss,
+            torch.tensor(kl_tolerance * self.latent_dim, device=kld_loss.device),
+        ).mean()
+
+        loss = reconstruction_loss + beta * kld_loss
 
         return loss, reconstruction_loss.detach(), kld_loss.detach()
 
 
 if __name__ == "__main__":
     obs_space = gym.spaces.Box(
-        low=np.zeros(shape=(64, 80, 3)), high=np.ones(shape=(64, 80, 3))
+        low=np.zeros(shape=(64, 64, 3)), high=np.ones(shape=(64, 64, 3))
     )
     obs = torch.tensor(obs_space.sample())
     conv_vae = ConvVAE(obs_space)

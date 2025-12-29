@@ -49,6 +49,7 @@ def train_reasoning_model(
     n_episodes: int,
     batch_size: int,
     rollout_time_length: int,
+    learning_rate: float,
     device: str = "cpu",
     save_path: str | None = None,
 ):
@@ -58,7 +59,7 @@ def train_reasoning_model(
     agent.train(False)
     agent.reasoning_model.train(True)
 
-    optimizer = AdamW(agent.reasoning_model.parameters())
+    optimizer = AdamW(agent.reasoning_model.parameters(), lr=learning_rate)
 
     ep_sum_losses = [
         {
@@ -158,6 +159,7 @@ if __name__ == "__main__":
         2,
         batch_size=64,
         rollout_time_length=8,
+        learning_rate=1e-4,
         device="cpu",
         save_path="checkpoint/trained_reasoning_mode.pt",
     )

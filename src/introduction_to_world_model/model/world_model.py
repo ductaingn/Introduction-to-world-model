@@ -74,7 +74,9 @@ class WorldModel:
                 self.replay_buffer.add(
                     obs.astype(np.float32),
                     next_obs.astype(np.float32),
-                    np.eye(int(self.action_space.n))[action].astype(np.float32), # One-hot encoding
+                    np.eye(int(self.action_space.n))[action].astype(
+                        np.float32
+                    ),  # One-hot encoding
                     np.array(reward).astype(np.float32),
                     np.array(terminated).astype(np.float32),
                     np.array(truncated).astype(np.float32),
@@ -120,6 +122,7 @@ class WorldModel:
             save_path = Path(path)
             save_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(checkpoint, save_path)
+            print(f"Model saved to {path}")
         except Exception as e:
             print("Error occurred while saving model!")
             print(e)

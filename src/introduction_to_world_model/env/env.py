@@ -1,6 +1,9 @@
-from typing import Any
+from typing import Any, Tuple
 
 import numpy as np
+
+import cv2
+
 import gymnasium as gym
 import miniworld
 
@@ -13,7 +16,11 @@ class Env(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, render_mode: str | None = None) -> None:
+    def __init__(
+        self,
+        img_shape: Tuple[int, int, int] = (64, 64, 3),
+        render_mode: str | None = None,
+    ) -> None:
         super().__init__()
 
         self._env: gym.Env = gym.make("MiniWorld-Sign-v0", render_mode=render_mode)
@@ -21,34 +28,22 @@ class Env(gym.Env):
         # Expose action space
         self.action_space: gym.spaces.Discrete = self._env.action_space
 
-        # Pad width: (H, W, C)
-        self.pad_width = (
-            (2, 2),  # H
-            (0, 0),  # W
-            (0, 0),  # C
-        )
-
-        # Original observation shape
-        h, w, c = self._env.observation_space["obs"].shape
-        pad_h = self.pad_width[0][0] + self.pad_width[0][1]
-        pad_w = self.pad_width[1][0] + self.pad_width[1][1]
-
-        padded_shape = (h + pad_h, w + pad_w, c)
+        # H, W, C
+        self.img_shape = img_shape
 
         self.observation_space: gym.spaces.Box = gym.spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=padded_shape,
+            shape=img_shape,
             dtype=np.float32,
         )
 
-    def _pad_obs(self, obs: np.ndarray) -> np.ndarray:
-        return np.pad(
-            obs,
-            pad_width=self.pad_width,
-            mode="constant",
-            constant_values=0,
-        ).astype(np.float32)
+    def _resize_obs(self, obs: np.ndarray) -> np.ndarray:
+        obs = cv2.resize(
+            obs, (self.img_shape[1], self.img_shape[0]), interpolation=cv2.INTER_LINEAR
+        )
+
+        return obs
 
     def reset(
         self,
@@ -58,7 +53,7 @@ class Env(gym.Env):
     ):
         obs, info = self._env.reset(seed=seed, options=options)
         obs = (
-            self._pad_obs(obs["obs"].astype(np.float32)) / 255.0
+            self._resize_obs(obs["obs"].astype(np.float32)) / 255.0
         )  # Normalize [0.0, 1.0]
         obs = obs * 2 - 1.0  # [-1.0, 1.0]
         return obs, info
@@ -67,7 +62,7 @@ class Env(gym.Env):
         obs, reward, terminated, truncated, info = self._env.step(action)
 
         obs = (
-            self._pad_obs(obs["obs"].astype(np.float32)) / 255.0
+            self._resize_obs(obs["obs"].astype(np.float32)) / 255.0
         )  # Normalize [0.0, 1.0]
         obs = obs * 2 - 1.0  # [-1.0, 1.0]
 
