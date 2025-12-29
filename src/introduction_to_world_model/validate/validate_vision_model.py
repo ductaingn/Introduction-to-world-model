@@ -30,20 +30,12 @@ def validate_vision_model(
             raise RuntimeError("Must provide a environment in mode ValidateMode.OOD")
 
         obs = []
-        o, _ = env.reset()
-        obs.append(o)
-        for _ in range(n_examples - 1):
-            a = env.action_space.sample()
-            o, _, _, _, _ = env.step(a)
-            obs.append(o)
+        agent.replay_buffer.reset()
+        agent.collect_data(env, 100_000)
 
-        obs = np.stack(obs)
-        obs = torch.from_numpy(obs)
-
-    elif mode == ValidateMode.ID:
-        random_indices = np.random.randint(0, len(agent.replay_buffer), size=n_examples)
-        obs, _, _, _, _, _ = agent.replay_buffer.get_batch(random_indices)
-        obs = torch.tensor(obs)
+    random_indices = np.random.randint(0, len(agent.replay_buffer), size=n_examples)
+    obs, _, _, _, _, _ = agent.replay_buffer.get_batch(random_indices)
+    obs = torch.tensor(obs)
 
     for idx, img in enumerate(obs):
         with torch.no_grad():
@@ -88,4 +80,4 @@ if __name__ == "__main__":
     agent = WorldModel(env.observation_space, env.action_space)
     agent.load_checkpoint("checkpoint/trained_vision_model.pt")
 
-    validate_vision_model(agent, 10, ValidateMode.ID, env=env)
+    validate_vision_model(agent, 10, ValidateMode.OOD, env=env)

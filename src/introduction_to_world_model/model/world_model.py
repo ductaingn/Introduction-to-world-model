@@ -83,6 +83,9 @@ class WorldModel:
                 )
                 obs = next_obs
 
+                if terminated or truncated:
+                    obs, _ = env.reset()
+
                 progress.update(step_task, advance=1)
 
     def save_checkpoint(
