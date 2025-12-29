@@ -134,6 +134,15 @@ class ReplayBuffer:
 
         return self.get_batch(batch_indices)
 
+    def reset(self):
+        self.obs.clear()
+        self.next_obs.clear()
+        self.act.clear()
+        self.reward.clear()
+        self.terminated.clear()
+        self.truncated.clear()
+
+        print(f"Cleared buffer! Current buffer size: {len(self)}.")
 
 if __name__ == "__main__":
     replay_buffer = ReplayBuffer(3)

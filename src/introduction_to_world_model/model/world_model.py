@@ -84,7 +84,9 @@ class WorldModel:
                 obs = next_obs
 
                 if terminated or truncated:
+                    print("Run into termination!")
                     obs, _ = env.reset()
+                    print("Environment reset!")
 
                 progress.update(step_task, advance=1)
 
