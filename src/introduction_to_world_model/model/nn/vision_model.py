@@ -20,7 +20,7 @@ class ConvVAE(nn.Module):
         self,
         obs_space: gym.spaces.Box,
         hidden_dims: List = [32, 64, 128, 256],
-        latent_dim: int = 64,
+        latent_dim: int = 128,
         *args,
         **kwargs,
     ) -> None:
