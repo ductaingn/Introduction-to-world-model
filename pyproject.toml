@@ -17,4 +17,4 @@ maintainers = [
   { name = "Duc Tai Nguyen", email = "ductaingn.015203@gmail.com" },
 ]
 
-dependencies = ["numpy", "gymnasium", "torch", "opencv-python", "wandb"]
+dependencies = ["numpy", "gymnasium", "miniworld", "torch", "opencv-python", "wandb", "attrs", "matplotlib", "rich"]

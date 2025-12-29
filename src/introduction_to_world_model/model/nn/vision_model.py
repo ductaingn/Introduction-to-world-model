@@ -180,7 +180,7 @@ class ConvVAE(nn.Module):
         mu: torch.Tensor,
         log_var: torch.Tensor,
         beta: float = 0.01,
-        kl_tolerance: float = 0.5,
+        kl_tolerance: float = 0.1,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         reconstruction_loss = torch.sum(
             (reconstructed_img - obs) ** 2, dim=[1, 2, 3]
@@ -198,7 +198,7 @@ class ConvVAE(nn.Module):
 
 if __name__ == "__main__":
     obs_space = gym.spaces.Box(
-        low=np.zeros(shape=(64, 64, 3)), high=np.ones(shape=(64, 64, 3))
+        low=np.zeros(shape=(128, 128, 3)), high=np.ones(shape=(128, 128, 3))
     )
     obs = torch.tensor(obs_space.sample())
     conv_vae = ConvVAE(obs_space)
@@ -207,3 +207,6 @@ if __name__ == "__main__":
     sample = conv_vae.decode(z)
 
     print(sample.shape)
+
+    from torchsummary import summary
+    summary(conv_vae, obs)
