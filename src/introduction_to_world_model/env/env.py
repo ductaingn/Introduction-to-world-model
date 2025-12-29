@@ -18,7 +18,7 @@ class Env(gym.Env):
 
     def __init__(
         self,
-        img_shape: Tuple[int, int, int] = (64, 64, 3),
+        img_shape: Tuple[int, int, int] = (128, 128, 3),
         render_mode: str | None = None,
     ) -> None:
         super().__init__()

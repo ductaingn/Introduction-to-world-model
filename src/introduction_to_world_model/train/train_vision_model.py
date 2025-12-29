@@ -25,6 +25,7 @@ def train_vision_model(
     learning_rate: float,
     device: str = "cpu",
     save_path: str | None = None,
+    load_path: str | None = None,
 ):
     if len(agent.replay_buffer) == 0:
         raise RuntimeError("Agent replay buffer is empty! you must collect")
@@ -39,6 +40,9 @@ def train_vision_model(
     agent.vision_model.train(True)
 
     optimizer = AdamW(agent.vision_model.parameters(), lr=learning_rate)
+
+    if load_path is not None:
+        agent.load_checkpoint(load_path, vision_optimizer=optimizer, device=device)
 
     ep_sum_losses = [
         {"Loss": 0.0, "Reconstruction Loss": 0.0, "KL Divergence Loss": 0.0}
@@ -108,6 +112,16 @@ def train_vision_model(
                     ),
                 )
 
+                progress.update(
+                    episode_task,
+                    completed=round(current_step/n_steps*n_epochs, 3),
+                    loss_info=(
+                        f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
+                        f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
+                        f"[magenta]KL Divergence Loss: {ep_sum_losses[ep]['KL Divergence Loss']:.3f} | "
+                    ),
+                )
+
                 wandb.log(
                     {
                         "Loss": current_loss,
@@ -119,15 +133,6 @@ def train_vision_model(
                     }
                 )
 
-            progress.update(
-                episode_task,
-                advance=1,
-                loss_info=(
-                    f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
-                    f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
-                    f"[magenta]KL Divergence Loss: {ep_sum_losses[ep]['KL Divergence Loss']:.3f} | "
-                ),
-            )
             progress.remove_task(step_task)
 
     if save_path is not None:
@@ -144,9 +149,10 @@ if __name__ == "__main__":
 
     train_vision_model(
         agent,
-        10,
-        batch_size=128,
+        20,
+        batch_size=256,
         learning_rate=1e-4,
-        device="cpu",
+        device="cuda:0",
         save_path="checkpoint/trained_vision_model.pt",
+        # load_path="checkpoint/trained_vision_model.pt",
     )
