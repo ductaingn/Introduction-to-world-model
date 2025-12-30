@@ -1,8 +1,11 @@
+import warnings
+
 import numpy as np
 
 import torch
-import torch.nn.functional as F
 from torch.optim.adamw import AdamW
+
+import wandb
 
 from rich.progress import (
     Progress,
@@ -21,9 +24,13 @@ def get_rollout_batch_with_z(
     agent: WorldModel, batch_indices: np.ndarray, rollout_time_length: int, device: str
 ):
     # To predict the future latent z, we have to infer the future observations, hence the `batch_indices_future`
-    batch_indices_future = np.arange(
-        batch_indices[0], batch_indices[-1] + rollout_time_length
+    # batch_indices_future = np.random.choice(np.arange(
+    #     batch_indices.min(), batch_indices.max() + rollout_time_length
+    # ), size=len(batch_indices), replace=False)
+    batch_indices_future = np.unique(
+        np.concatenate([batch_indices, batch_indices + rollout_time_length])
     )
+    np.random.shuffle(batch_indices_future)
     batch = agent.replay_buffer.get_batch(batch_indices_future)
 
     next_obs_img = batch[1]
@@ -33,7 +40,7 @@ def get_rollout_batch_with_z(
         mu, log_var = agent.vision_model.encode(next_obs_img)
         next_z = agent.vision_model.reparameterize(mu, log_var)
 
-    next_z = next_z.numpy()
+    next_z = next_z.cpu().numpy()
     z_indices = np.arange(0, len(batch_indices))
 
     return agent.replay_buffer.get_rollout_batch(
@@ -46,27 +53,48 @@ def get_rollout_batch_with_z(
 
 def train_reasoning_model(
     agent: WorldModel,
-    n_episodes: int,
+    n_epochs: int,
     batch_size: int,
     rollout_time_length: int,
     learning_rate: float,
     device: str = "cpu",
     save_path: str | None = None,
+    load_path: str | None = None,
 ):
-    if len(agent.replay_buffer) == 0:
-        raise RuntimeError("Agent replay buffer is empty! you must collect")
-
-    agent.train(False)
-    agent.reasoning_model.train(True)
+    # wandb.init(
+    #     project="introduction_to_world_model",
+    # )
+    # wandb.watch(agent.reasoning_model, log_freq=10)
 
     optimizer = AdamW(agent.reasoning_model.parameters(), lr=learning_rate)
+
+    if load_path is not None:
+        agent.load_checkpoint(load_path, vision_optimizer=optimizer, device=device)
+    else:
+        warnings.warn(
+            "No pre-trained vision model loaded!\nYou should train vision model before training reasoning model, otherwise the model can not learn meaningful representation and reasoning!"
+        )
+
+    if len(agent.replay_buffer) == 0:
+        raise RuntimeError(
+            "Agent replay buffer is empty! You must collect data first! Hint: Use <WorldModel>.collect_data(<env>)."
+        )
+
+    agent.to(device)
+    agent.train(False)
+    agent.reasoning_model.train(True)
 
     ep_sum_losses = [
         {
             "Loss": 0.0,
         }
-        for _ in range(n_episodes)
+        for _ in range(n_epochs)
     ]
+
+    n_steps_per_epoch = len(agent.replay_buffer) // batch_size
+    n_steps = (
+        len(agent.replay_buffer) // batch_size - rollout_time_length
+    )  # Prevent out of bound because we need to ensure the future observation are observable within out dataset
 
     with Progress(
         TextColumn("[progress.description]{task.description}"),
@@ -79,24 +107,28 @@ def train_reasoning_model(
     ) as progress:
         episode_task = progress.add_task(
             "[green]Episode",
-            total=n_episodes,
+            total=n_epochs,
             loss_info="[yellow]Loss: --",
         )
 
         print("Training reasoning model...")
-        for ep in range(n_episodes):
-            n_step = (
-                len(agent.replay_buffer) // batch_size - rollout_time_length
-            )  # Prevent out of bound because we need to ensure the future observation are observable within out dataset
-
+        for ep in range(n_epochs):
             step_task = progress.add_task(
                 "[cyan]Step",
-                total=n_step,
+                total=n_steps,
                 loss_info="[yellow]Loss: --",
             )
-            for step in range(n_step):
-                batch_indices = np.arange(
-                    step * batch_size, step * batch_size + batch_size
+
+            for step in range(n_steps_per_epoch):
+                current_step = ep * n_steps_per_epoch + step
+
+                # batch_indices = np.arange(
+                #     step * batch_size, step * batch_size + batch_size
+                # )
+                batch_indices = np.random.choice(
+                    len(agent.replay_buffer) - rollout_time_length,
+                    size=batch_size,
+                    replace=False,
                 )
 
                 _, _, act, r_target, term, trunc, z_target = get_rollout_batch_with_z(
@@ -135,11 +167,18 @@ def train_reasoning_model(
                     loss_info=(f"[yellow]Loss: {current_loss:.3f} | "),
                 )
 
-            progress.update(
-                episode_task,
-                advance=1,
-                loss_info=(f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "),
-            )
+                progress.update(
+                    episode_task,
+                    completed=round(current_step / n_steps * n_epochs, 3),
+                    loss_info=(f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "),
+                )
+
+                # wandb.log(
+                #     {
+                #         "Loss": current_loss,
+                #     }
+                # )
+
             progress.remove_task(step_task)
 
     if save_path is not None:
@@ -151,15 +190,13 @@ if __name__ == "__main__":
 
     agent = WorldModel(env.observation_space, env.action_space)
 
-    agent.collect_data(env, 1000)
-    # agent.load_checkpoint("checkpoint/trained_vision_model.pt")
-
     train_reasoning_model(
         agent,
         2,
         batch_size=64,
-        rollout_time_length=8,
+        rollout_time_length=128,
         learning_rate=1e-4,
-        device="cpu",
+        device="cuda:0",
         save_path="checkpoint/trained_reasoning_mode.pt",
+        load_path="checkpoint/trained_vision_model.pt",
     )

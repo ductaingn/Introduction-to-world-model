@@ -28,21 +28,21 @@ def train_vision_model(
     load_path: str | None = None,
 ):
     if len(agent.replay_buffer) == 0:
-        raise RuntimeError("Agent replay buffer is empty! you must collect")
+        raise RuntimeError("Agent replay buffer is empty! You must collect data first! Hint: Use <WorldModel>.collect_data(<env>).")
 
     wandb.init(
         project="introduction_to_world_model",
     )
     wandb.watch(agent.vision_model, log_freq=10)
 
-    agent.to(device)
-    agent.train(False)
-    agent.vision_model.train(True)
-
     optimizer = AdamW(agent.vision_model.parameters(), lr=learning_rate)
 
     if load_path is not None:
         agent.load_checkpoint(load_path, vision_optimizer=optimizer, device=device)
+
+    agent.to(device)
+    agent.train(False)
+    agent.vision_model.train(True)
 
     ep_sum_losses = [
         {"Loss": 0.0, "Reconstruction Loss": 0.0, "KL Divergence Loss": 0.0}

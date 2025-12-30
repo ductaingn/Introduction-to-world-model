@@ -99,7 +99,9 @@ class ReplayBuffer:
         """
         max_index = batch_indices.max() + time_length
         if len(self) <= max_index:
-            raise RuntimeError("Batch indices is greater than length of buffer!")
+            raise RuntimeError(
+                f"Batch indices is greater than length of buffer!\nBuffer length: {len(self)}\nMax index: {max_index}"
+            )
 
         # Shape: (B, T)
         time_offsets = np.arange(time_length)
@@ -133,6 +135,7 @@ class ReplayBuffer:
         batch_indices = np.random.randint(low=0, high=len(self.obs), size=batch_size)
 
         return self.get_batch(batch_indices)
+
 
 
 if __name__ == "__main__":
