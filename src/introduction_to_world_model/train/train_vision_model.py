@@ -28,21 +28,21 @@ def train_vision_model(
     load_path: str | None = None,
 ):
     if len(agent.replay_buffer) == 0:
-        raise RuntimeError("Agent replay buffer is empty! you must collect")
+        raise RuntimeError("Agent replay buffer is empty! You must collect data first! Hint: Use <WorldModel>.collect_data(<env>).")
 
     wandb.init(
         project="introduction_to_world_model",
     )
     wandb.watch(agent.vision_model, log_freq=10)
 
-    agent.to(device)
-    agent.train(False)
-    agent.vision_model.train(True)
-
     optimizer = AdamW(agent.vision_model.parameters(), lr=learning_rate)
 
     if load_path is not None:
         agent.load_checkpoint(load_path, vision_optimizer=optimizer, device=device)
+
+    agent.to(device)
+    agent.train(False)
+    agent.vision_model.train(True)
 
     ep_sum_losses = [
         {"Loss": 0.0, "Reconstruction Loss": 0.0, "KL Divergence Loss": 0.0}
@@ -66,7 +66,7 @@ def train_vision_model(
         episode_task = progress.add_task(
             "[green]Episode",
             total=n_epochs,
-            loss_info="[yellow]Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --",
+            loss_info="[yellow]Episode Total Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --",
         )
 
         print("Training vision model...")
@@ -116,7 +116,7 @@ def train_vision_model(
                     episode_task,
                     completed=round(current_step/n_steps*n_epochs, 3),
                     loss_info=(
-                        f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
+                        f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
                         f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
                         f"[magenta]KL Divergence Loss: {ep_sum_losses[ep]['KL Divergence Loss']:.3f} | "
                     ),

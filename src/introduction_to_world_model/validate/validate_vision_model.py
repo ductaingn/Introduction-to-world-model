@@ -1,5 +1,3 @@
-from enum import Enum
-
 import numpy as np
 
 import torch
@@ -10,11 +8,7 @@ import matplotlib.pyplot as plt
 
 from introduction_to_world_model.model.world_model import WorldModel
 from introduction_to_world_model.env.env import Env
-
-
-class ValidateMode(Enum):
-    OOD = "Out-of-Distribution"
-    ID = "In-Distribution"
+from introduction_to_world_model.validate import ValidateMode
 
 
 def validate_vision_model(

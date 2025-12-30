@@ -9,7 +9,7 @@ import numpy as np
 
 @attrs.define
 class ReplayBuffer:
-    buffer_size: int = 10000
+    max_buffer_size: int = 10000
 
     obs: Deque[np.ndarray] = attrs.field(init=False)
     next_obs: Deque[np.ndarray] = attrs.field(init=False)
@@ -19,15 +19,18 @@ class ReplayBuffer:
     truncated: Deque[np.ndarray] = attrs.field(init=False)
 
     def __attrs_post_init__(self) -> None:
-        self.obs = deque(maxlen=self.buffer_size)
-        self.next_obs = deque(maxlen=self.buffer_size)
-        self.act = deque(maxlen=self.buffer_size)
-        self.reward = deque(maxlen=self.buffer_size)
-        self.terminated = deque(maxlen=self.buffer_size)
-        self.truncated = deque(maxlen=self.buffer_size)
+        self.obs = deque(maxlen=self.max_buffer_size)
+        self.next_obs = deque(maxlen=self.max_buffer_size)
+        self.act = deque(maxlen=self.max_buffer_size)
+        self.reward = deque(maxlen=self.max_buffer_size)
+        self.terminated = deque(maxlen=self.max_buffer_size)
+        self.truncated = deque(maxlen=self.max_buffer_size)
 
     def __len__(self):
         return len(self.obs)
+    
+    def __repr__(self):
+        return f"{self.__class__.__name__}(max_buffer_size={self.max_buffer_size}, buffer_len={len(self)})"
 
     def add(
         self,
@@ -82,7 +85,7 @@ class ReplayBuffer:
         batch_indices: np.ndarray,
         time_length: int,
         next_z: np.ndarray,
-        z_indices: np.ndarray,
+        next_z_indices: np.ndarray,
     ) -> Tuple[
         np.ndarray,
         np.ndarray,
@@ -99,12 +102,14 @@ class ReplayBuffer:
         """
         max_index = batch_indices.max() + time_length
         if len(self) <= max_index:
-            raise RuntimeError("Batch indices is greater than length of buffer!")
+            raise RuntimeError(
+                f"Batch indices is greater than length of buffer!\nBuffer length: {len(self)}\nMax index: {max_index}"
+            )
 
         # Shape: (B, T)
         time_offsets = np.arange(time_length)
         rollout_indices = batch_indices[:, None] + time_offsets[None, :]
-        z_rollout_indices = z_indices[:, None] + time_offsets[None, :]
+        z_rollout_indices = next_z_indices[:, None] + time_offsets[None, :]
 
         # Convert buffers once
         obs = np.asarray(self.obs)
@@ -143,6 +148,7 @@ class ReplayBuffer:
         self.truncated.clear()
 
         print(f"Cleared buffer! Current buffer size: {len(self)}.")
+
 
 if __name__ == "__main__":
     replay_buffer = ReplayBuffer(3)

@@ -151,14 +151,19 @@ class WorldModel:
             return
 
         # ---- models ----
+        print("Loading models weights...")
         self.vision_model.load_state_dict(checkpoint["vision_model"])
+        print("Vision model loaded!")
         self.reasoning_model.load_state_dict(checkpoint["reasoning_model"])
+        print("Reasoning model loaded!")
         self.policy_model.load_state_dict(checkpoint["policy_model"])
+        print("Policy model loaded!")
 
         # ---- replay buffer ----
         self.replay_buffer_size = checkpoint["replay_buffer_size"]
         self.replay_buffer = ReplayBuffer(self.replay_buffer_size)
 
+        print("Loading replay buffer...")
         rb = checkpoint["replay_buffer"]
         for obs, next_obs, act, reward, terminated, truncated in zip(
             rb["obs"],
@@ -176,8 +181,10 @@ class WorldModel:
                 terminated,
                 truncated,
             )
+        print(f"Replay buffer loaded!\nBuffer length: {len(self.replay_buffer)}")
 
         # ---- optimizers ----
+        print("Loading optimizers...")
         if vision_optimizer is not None and "vision_optimizer" in checkpoint:
             vision_optimizer.load_state_dict(checkpoint["vision_optimizer"])
 
@@ -186,3 +193,4 @@ class WorldModel:
 
         if policy_optimizer is not None and "policy_optimizer" in checkpoint:
             policy_optimizer.load_state_dict(checkpoint["policy_optimizer"])
+        print("All optimizers loaded!")
