@@ -30,31 +30,39 @@ def get_rollout_batch_with_z(
     rollout_indices = batch_indices[:, None] + time_offsets[None, :]
 
     # (B, T, ...)
-    _, next_obs, act, reward, terminated, truncated = \
-        agent.replay_buffer.get_batch(rollout_indices.flatten())
+    obs, next_obs, act, reward, terminated, truncated = agent.replay_buffer.get_batch(
+        rollout_indices.flatten()
+    )
 
     # reshape back
+    obs = obs.reshape(batch_indices.shape[0], rollout_time_length, *obs.shape[1:])
     next_obs = next_obs.reshape(
         batch_indices.shape[0], rollout_time_length, *next_obs.shape[1:]
     )
 
+    obs_torch = torch.tensor(obs).to(device)
     next_obs_torch = torch.tensor(next_obs).to(device)
 
     with torch.no_grad():
-        B, T = next_obs_torch.shape[:2]
-        flat = next_obs_torch.view(B * T, *next_obs_torch.shape[2:])
-        mu, log_var = agent.vision_model.encode(flat)
-        z = agent.vision_model.reparameterize(mu, log_var)
+        B, T = obs_torch.shape[:2]
+        flat_obs = obs_torch.view(B * T, *obs_torch.shape[2:])
+        flat_next_obs = next_obs_torch.view(B * T, *next_obs_torch.shape[2:])
+        mu_obs, log_var_obs = agent.vision_model.encode(flat_obs)
+        mu_next_obs, log_var_next_obs = agent.vision_model.encode(flat_next_obs)
+        z = agent.vision_model.reparameterize(mu_obs, log_var_obs)
+        next_z = agent.vision_model.reparameterize(mu_next_obs, log_var_next_obs)
         z = z.view(B, T, -1)
+        next_z = next_z.view(B, T, -1)
 
     return (
-        None,               # obs (unused)
-        None,               # next_obs (unused)
+        None,  # obs (unused)
+        None,  # next_obs (unused)
         act.reshape(B, T, -1),
         reward.reshape(B, T),
         terminated.reshape(B, T),
         truncated.reshape(B, T),
         z.cpu().numpy(),
+        next_z.cpu().numpy(),
     )
 
 
@@ -76,7 +84,7 @@ def train_reasoning_model(
     optimizer = AdamW(agent.reasoning_model.parameters(), lr=learning_rate)
 
     if load_path is not None:
-        agent.load_checkpoint(load_path, vision_optimizer=optimizer, device=device)
+        agent.load_checkpoint(load_path, device=device)
     else:
         warnings.warn(
             "\nNo pre-trained vision model loaded!\nYou should train vision model before training reasoning model, otherwise the model can not learn meaningful representation and reasoning!"
@@ -99,8 +107,7 @@ def train_reasoning_model(
         for _ in range(n_epochs)
     ]
 
-    n_steps_per_epoch = len(agent.replay_buffer) // batch_size
-    n_steps = (
+    n_steps_per_epoch = (
         len(agent.replay_buffer) // batch_size - rollout_time_length
     )  # Prevent out of bound because we need to ensure the future observation are observable within out dataset
 
@@ -123,33 +130,32 @@ def train_reasoning_model(
         for ep in range(n_epochs):
             step_task = progress.add_task(
                 "[cyan]Step",
-                total=n_steps,
+                total=n_steps_per_epoch,
                 loss_info="[yellow]Loss: --",
             )
 
             for step in range(n_steps_per_epoch):
-                current_step = ep * n_steps_per_epoch + step
-
                 batch_indices = np.random.choice(
                     len(agent.replay_buffer) - rollout_time_length,
                     size=batch_size,
                     replace=False,
                 )
 
-                _, _, act, r_target, term, trunc, z_target = get_rollout_batch_with_z(
+                _, _, act, r_target, term, trunc, z, next_z = get_rollout_batch_with_z(
                     agent, batch_indices, rollout_time_length, device
                 )
 
-                z_target = torch.tensor(z_target).to(device)
+                z = torch.tensor(z).to(device)
+                next_z = torch.tensor(next_z).to(device)
                 act = torch.tensor(act).to(device)
                 r_target = torch.tensor(r_target).to(device)
                 done_target = torch.tensor(np.max([term, trunc], axis=0)).to(device)
 
                 mu, log_std, log_weights, h_n, r_predict, done_predict = (
-                    agent.reasoning_model.forward(z_target, act)
+                    agent.reasoning_model.forward(z, act)
                 )
                 loss = agent.reasoning_model.compute_loss(
-                    z_target,
+                    next_z,
                     mu,
                     log_std,
                     log_weights,
@@ -174,8 +180,10 @@ def train_reasoning_model(
 
                 progress.update(
                     episode_task,
-                    completed=round(current_step / n_steps * n_epochs, 3),
-                    loss_info=(f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "),
+                    completed=round(step / n_steps_per_epoch + ep, 3),
+                    loss_info=(
+                        f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
+                    ),
                 )
 
                 wandb.log(
@@ -191,17 +199,17 @@ def train_reasoning_model(
 
 
 if __name__ == "__main__":
-    env = Env()
+    env = Env(render_mode=None)
 
     agent = WorldModel(env.observation_space, env.action_space)
 
     train_reasoning_model(
         agent,
-        2,
-        batch_size=2,
-        rollout_time_length=16,
+        20,
+        batch_size=64,
+        rollout_time_length=128,
         learning_rate=1e-4,
-        device="cpu",
-        save_path="checkpoint/trained_reasoning_mode.pt",
-        # load_path="checkpoint/trained_vision_model.pt",
+        device="cuda:0",
+        save_path="checkpoint/trained_reasoning_model.pt",
+        load_path="checkpoint/trained_vision_model.pt",
     )
