@@ -66,7 +66,7 @@ def train_vision_model(
         episode_task = progress.add_task(
             "[green]Episode",
             total=n_epochs,
-            loss_info="[yellow]Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --",
+            loss_info="[yellow]Episode Total Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --",
         )
 
         print("Training vision model...")
@@ -116,7 +116,7 @@ def train_vision_model(
                     episode_task,
                     completed=round(current_step/n_steps*n_epochs, 3),
                     loss_info=(
-                        f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
+                        f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
                         f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
                         f"[magenta]KL Divergence Loss: {ep_sum_losses[ep]['KL Divergence Loss']:.3f} | "
                     ),

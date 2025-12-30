@@ -21,33 +21,40 @@ from introduction_to_world_model.env.env import Env
 
 
 def get_rollout_batch_with_z(
-    agent: WorldModel, batch_indices: np.ndarray, rollout_time_length: int, device: str
+    agent: WorldModel,
+    batch_indices: np.ndarray,
+    rollout_time_length: int,
+    device: str,
 ):
-    # To predict the future latent z, we have to infer the future observations, hence the `batch_indices_future`
-    # batch_indices_future = np.random.choice(np.arange(
-    #     batch_indices.min(), batch_indices.max() + rollout_time_length
-    # ), size=len(batch_indices), replace=False)
-    batch_indices_future = np.unique(
-        np.concatenate([batch_indices, batch_indices + rollout_time_length])
-    )
-    np.random.shuffle(batch_indices_future)
-    batch = agent.replay_buffer.get_batch(batch_indices_future)
+    time_offsets = np.arange(rollout_time_length)
+    rollout_indices = batch_indices[:, None] + time_offsets[None, :]
 
-    next_obs_img = batch[1]
-    next_obs_img = torch.tensor(next_obs_img).to(device)
+    # (B, T, ...)
+    _, next_obs, act, reward, terminated, truncated = \
+        agent.replay_buffer.get_batch(rollout_indices.flatten())
+
+    # reshape back
+    next_obs = next_obs.reshape(
+        batch_indices.shape[0], rollout_time_length, *next_obs.shape[1:]
+    )
+
+    next_obs_torch = torch.tensor(next_obs).to(device)
 
     with torch.no_grad():
-        mu, log_var = agent.vision_model.encode(next_obs_img)
-        next_z = agent.vision_model.reparameterize(mu, log_var)
+        B, T = next_obs_torch.shape[:2]
+        flat = next_obs_torch.view(B * T, *next_obs_torch.shape[2:])
+        mu, log_var = agent.vision_model.encode(flat)
+        z = agent.vision_model.reparameterize(mu, log_var)
+        z = z.view(B, T, -1)
 
-    next_z = next_z.cpu().numpy()
-    z_indices = np.arange(0, len(batch_indices))
-
-    return agent.replay_buffer.get_rollout_batch(
-        batch_indices,
-        time_length=rollout_time_length,
-        next_z=next_z,
-        z_indices=z_indices,
+    return (
+        None,               # obs (unused)
+        None,               # next_obs (unused)
+        act.reshape(B, T, -1),
+        reward.reshape(B, T),
+        terminated.reshape(B, T),
+        truncated.reshape(B, T),
+        z.cpu().numpy(),
     )
 
 
@@ -61,10 +68,10 @@ def train_reasoning_model(
     save_path: str | None = None,
     load_path: str | None = None,
 ):
-    # wandb.init(
-    #     project="introduction_to_world_model",
-    # )
-    # wandb.watch(agent.reasoning_model, log_freq=10)
+    wandb.init(
+        project="introduction_to_world_model",
+    )
+    wandb.watch(agent.reasoning_model, log_freq=10)
 
     optimizer = AdamW(agent.reasoning_model.parameters(), lr=learning_rate)
 
@@ -72,8 +79,9 @@ def train_reasoning_model(
         agent.load_checkpoint(load_path, vision_optimizer=optimizer, device=device)
     else:
         warnings.warn(
-            "No pre-trained vision model loaded!\nYou should train vision model before training reasoning model, otherwise the model can not learn meaningful representation and reasoning!"
+            "\nNo pre-trained vision model loaded!\nYou should train vision model before training reasoning model, otherwise the model can not learn meaningful representation and reasoning!"
         )
+        agent.collect_data(Env(), 10_000)
 
     if len(agent.replay_buffer) == 0:
         raise RuntimeError(
@@ -108,7 +116,7 @@ def train_reasoning_model(
         episode_task = progress.add_task(
             "[green]Episode",
             total=n_epochs,
-            loss_info="[yellow]Loss: --",
+            loss_info="[yellow]Episode Total Loss: --",
         )
 
         print("Training reasoning model...")
@@ -122,9 +130,6 @@ def train_reasoning_model(
             for step in range(n_steps_per_epoch):
                 current_step = ep * n_steps_per_epoch + step
 
-                # batch_indices = np.arange(
-                #     step * batch_size, step * batch_size + batch_size
-                # )
                 batch_indices = np.random.choice(
                     len(agent.replay_buffer) - rollout_time_length,
                     size=batch_size,
@@ -170,14 +175,14 @@ def train_reasoning_model(
                 progress.update(
                     episode_task,
                     completed=round(current_step / n_steps * n_epochs, 3),
-                    loss_info=(f"[yellow]Loss: {ep_sum_losses[ep]['Loss']:.3f} | "),
+                    loss_info=(f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "),
                 )
 
-                # wandb.log(
-                #     {
-                #         "Loss": current_loss,
-                #     }
-                # )
+                wandb.log(
+                    {
+                        "Loss": current_loss,
+                    }
+                )
 
             progress.remove_task(step_task)
 
@@ -193,10 +198,10 @@ if __name__ == "__main__":
     train_reasoning_model(
         agent,
         2,
-        batch_size=64,
-        rollout_time_length=128,
+        batch_size=2,
+        rollout_time_length=16,
         learning_rate=1e-4,
-        device="cuda:0",
+        device="cpu",
         save_path="checkpoint/trained_reasoning_mode.pt",
-        load_path="checkpoint/trained_vision_model.pt",
+        # load_path="checkpoint/trained_vision_model.pt",
     )
