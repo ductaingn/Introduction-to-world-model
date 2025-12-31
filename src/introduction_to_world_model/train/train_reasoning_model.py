@@ -84,7 +84,7 @@ def train_reasoning_model(
     optimizer = AdamW(agent.reasoning_model.parameters(), lr=learning_rate)
 
     if load_path is not None:
-        agent.load_checkpoint(load_path, device=device)
+        agent.load_checkpoint(load_path, device=device, load_vision_model=True, load_reasoning_model=False, load_policy_model=False)
     else:
         warnings.warn(
             "\nNo pre-trained vision model loaded!\nYou should train vision model before training reasoning model, otherwise the model can not learn meaningful representation and reasoning!"
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     train_reasoning_model(
         agent,
         20,
-        batch_size=64,
+        batch_size=16,
         rollout_time_length=agent.reasoning_model.rollout_time_length,
         learning_rate=1e-4,
         device="cuda:0",

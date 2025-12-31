@@ -197,16 +197,17 @@ class ConvVAE(nn.Module):
 
 
 if __name__ == "__main__":
+    from torchsummary import summary
+    device = "cuda:0"
+    
     obs_space = gym.spaces.Box(
         low=np.zeros(shape=(128, 128, 3)), high=np.ones(shape=(128, 128, 3))
     )
-    obs = torch.tensor(obs_space.sample())
-    conv_vae = ConvVAE(obs_space)
+    obs = torch.tensor(obs_space.sample()).to(device)
+    conv_vae = ConvVAE(obs_space).to(device)
     mu, log_var = conv_vae.encode(obs)
     z = conv_vae.reparameterize(mu, log_var)
     sample = conv_vae.decode(z)
 
     print(sample.shape)
-
-    from torchsummary import summary
     summary(conv_vae, obs)

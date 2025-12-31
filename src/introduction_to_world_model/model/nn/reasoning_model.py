@@ -1,10 +1,14 @@
 from typing import Tuple
+import math
 
 import gymnasium as gym
+
 import torch
 import torch.nn as nn
 from torch.nn.functional import mse_loss, binary_cross_entropy_with_logits, log_softmax
-from torch.distributions import Categorical, Normal
+from torch.distributions import Categorical
+
+LOG_SQRT_2PI = 0.5 * math.log(2.0 * math.pi)
 
 
 class MixtureDensityHead(nn.Module):
@@ -78,34 +82,35 @@ class MixtureDensityHead(nn.Module):
             return chosen_mu + eps * chosen_std
     
     @classmethod
-    def calculate_loss(cls, z_target, mu, log_std, log_weights, eps=1e-8):
-        std = log_std.exp()
-        weights = log_weights.exp()
-        
-        # z_target: (B, z_size) -> (B, 1, z_size)
-        z_target = z_target.unsqueeze(1)
-        
-        # Create the Normal distribution
-        # (B, K, z_size)
-        dist = Normal(loc=mu, scale=std + eps)
-        
-        # Calculate log probability: (B, K, z_size)
-        log_prob = dist.log_prob(z_target)
-        
-        # Sum across the z_size dimension (assuming independent dimensions)
-        # (B, K)
-        log_prob = torch.sum(log_prob, dim=-1)
-        
-        # Combine with weights: log(w * prob) = log(w) + log(prob)
-        # (B, K)
-        weighted_log_prob = log_prob + torch.log(weights + eps)
-        
-        # Use logsumexp across the mixtures (K) for stability
-        # (B,)
-        loss = -torch.logsumexp(weighted_log_prob, dim=-1)
-        
-        return loss.mean()
+    def calculate_loss(cls, z, mu, log_std, log_pi) -> torch.Tensor:
+        """
+        z:        (B, z_size)
+        mu:       (B, K, z_size)
+        log_std:  (B, K, z_size)
+        log_pi:   (B, K)          (log-softmaxed!)
+        """
 
+        B, K, Z = mu.shape
+
+        # Expand z to (B, 1, z_size) WITHOUT materializing K copies
+        z = z.view(-1, 1, z.shape[-1])
+
+        # Gaussian log-likelihood, computed manually
+        # (B, K, z_size)
+        log_prob = -0.5 * ((z - mu) / log_std.exp()) ** 2 \
+                - log_std \
+                - LOG_SQRT_2PI
+
+        # Sum over z dimensions → (B, K)
+        log_prob = log_prob.sum(dim=-1)
+
+        # Add mixture weights
+        log_prob = log_prob + log_pi
+
+        # LogSumExp over mixtures → (B,)
+        loss = -torch.logsumexp(log_prob, dim=1)
+
+        return loss.mean()
 
 
 class MDNRNN(nn.Module):
@@ -113,10 +118,10 @@ class MDNRNN(nn.Module):
         self,
         action_space: gym.spaces.Discrete,
         z_size: int,
-        rollout_time_length: int = 128,
+        rollout_time_length: int = 512,
         hidden_size: int = 256,
-        predict_reward: bool = True,
-        predict_done: bool = True,
+        predict_reward: bool = False,
+        predict_done: bool = False,
         *args,
         **kwargs,
     ) -> None:
@@ -132,7 +137,7 @@ class MDNRNN(nn.Module):
         self.gru = nn.GRU(
             input_size=self.a_size + z_size,
             hidden_size=hidden_size,
-            num_layers=3,
+            num_layers=1,
             batch_first=True,
         )
 
@@ -227,14 +232,17 @@ class MDNRNN(nn.Module):
 
 
 if __name__ == "__main__":
-    action_space = gym.spaces.Discrete(3)
-    mdnrnn = MDNRNN(action_space, z_size=256)
+    from torchsummary import summary
+    device = "cuda:0"
 
-    B, T = 2, 4
+    B, T = 2, 1000
+    action_space = gym.spaces.Discrete(3)
+    mdnrnn = MDNRNN(action_space, z_size=128, rollout_time_length=T).to(device)
+    summary(mdnrnn)
 
     # latent states
-    z = torch.rand(B, T, 256)
-    next_z = torch.rand(B, T, 256)
+    z = torch.rand(B, T, 128).to(device)
+    next_z = torch.rand(B, T, 128).to(device)
 
     # actions (one-hot)
     a = (
@@ -244,6 +252,7 @@ if __name__ == "__main__":
         )
         .float()
         .view(B, T, -1)
+        .to(device)
     )
 
     mu, log_std, log_weights, h, r, d = mdnrnn(z, a)
@@ -258,4 +267,4 @@ if __name__ == "__main__":
     print("next_z_predict:", next_z_predict.shape)
 
     loss = mdnrnn.compute_loss(next_z, mu, log_std, log_weights, r, r, d, d)
-    print(loss.item())
+    print(loss.detach().cpu().item())

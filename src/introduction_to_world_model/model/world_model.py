@@ -131,6 +131,9 @@ class WorldModel:
         self,
         path: str,
         *,
+        load_vision_model: bool = True,
+        load_reasoning_model: bool = True,
+        load_policy_model: bool = True,
         vision_optimizer: torch.optim.Optimizer | None = None,
         reasoning_optimizer: torch.optim.Optimizer | None = None,
         policy_optimizer: torch.optim.Optimizer | None = None,
@@ -146,13 +149,18 @@ class WorldModel:
             return
 
         # ---- models ----
-        print("Loading models weights...")
-        self.vision_model.load_state_dict(checkpoint["vision_model"])
-        print("Vision model loaded!")
-        self.reasoning_model.load_state_dict(checkpoint["reasoning_model"])
-        print("Reasoning model loaded!")
-        self.policy_model.load_state_dict(checkpoint["policy_model"])
-        print("Policy model loaded!")
+        if load_vision_model:
+            print("Loading vision model...")
+            self.vision_model.load_state_dict(checkpoint["vision_model"])
+            print("Vision model loaded!")
+        if load_reasoning_model:
+            print("Loading reasoning model...")
+            self.reasoning_model.load_state_dict(checkpoint["reasoning_model"])
+            print("Reasoning model loaded!")
+        if load_policy_model:
+            print("Loading policy model...")
+            self.policy_model.load_state_dict(checkpoint["policy_model"])
+            print("Policy model loaded!")
 
         # ---- replay buffer ----
         self.replay_buffer_size = checkpoint["replay_buffer_size"]
