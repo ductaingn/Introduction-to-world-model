@@ -182,10 +182,12 @@ class WorldModel:
         print("Loading optimizers...")
         if vision_optimizer is not None and "vision_optimizer" in checkpoint:
             vision_optimizer.load_state_dict(checkpoint["vision_optimizer"])
+            print("Vision Model Optimizer loaded!")
 
         if reasoning_optimizer is not None and "reasoning_optimizer" in checkpoint:
             reasoning_optimizer.load_state_dict(checkpoint["reasoning_optimizer"])
+            print("Reasoning Model Optimizer loaded!")
 
         if policy_optimizer is not None and "policy_optimizer" in checkpoint:
             policy_optimizer.load_state_dict(checkpoint["policy_optimizer"])
-        print("All optimizers loaded!")
+            print("Policy Model Optimizer loaded!")

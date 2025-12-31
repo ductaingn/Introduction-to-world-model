@@ -22,54 +22,90 @@ class MixtureDensityHead(nn.Module):
         self.log_weights = nn.Linear(256, num_mixture)
 
     def forward(
-        self, h: torch.Tensor
+        self, rnn_output: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        h = self.base(h)
+        """
+        Parameters
+        ----------
+        rnn_output: torch.Tensor
+            Output of RNN network (B*T, H)
+        """
+        rnn_output = self.base(rnn_output)
 
-        mu = self.mu(h)
-        log_std = self.log_std(h)
-        log_weights = self.log_weights(h)
+        mu = self.mu(rnn_output)  # (B*T, K*H)
+        log_std = self.log_std(rnn_output)  # (B*T, K*H)
+        log_weights = self.log_weights(rnn_output)  # (B*T, K)
 
         mu = mu.view(-1, self.num_mixture, self.z_size)
         log_std = log_std.view(-1, self.num_mixture, self.z_size)
         log_weights = log_softmax(log_weights, dim=-1)
 
         return mu, log_std, log_weights
-    
-    def sample(self, mu: torch.Tensor, log_std: torch.Tensor, log_weights: torch.Tensor, deterministic: bool=True) -> torch.Tensor:
+
+    def sample(
+        self,
+        mu: torch.Tensor,        # (B, K, H)
+        log_std: torch.Tensor,       # (B, K, H)
+        log_weights: torch.Tensor,   # (B, K)
+        deterministic: bool = False,
+    ) -> torch.Tensor:
         B, K, H = mu.shape
-        uniform_samples = torch.rand(B).to(mu.device)
-        cum_weights = log_weights.exp().cumsum(dim=1).to(mu.device)
+        std = log_std.exp()
+        weights = log_weights.exp()
 
-        sampled_pred = torch.zeros(B, H).to(mu.device)
-        for b in range(B):
-            if deterministic:
-                k = torch.argmax(log_weights[b])
-            else:
-                k = torch.searchsorted(cum_weights[b], uniform_samples[b]).item()
-            sampled_pred[b] = torch.normal(mu[b, k], log_std[b, k].exp())
+        if deterministic:
+            # Pick the mixture component with the highest weight
+            chosen_distr_ind = torch.argmax(weights, dim=-1) # Shape: (B)
+        else:
+            # Sample a component index based on the weights
+            cat = Categorical(probs=weights)
+            chosen_distr_ind = cat.sample() # Shape: (B)
 
-        return sampled_pred
+        # We need to reshape the index to (B, 1, H) to use torch.gather
+        # This allows us to pick the specific K-dimension for each Batch
+        idx = chosen_distr_ind.view(B, 1, 1).expand(B, 1, H)
+        
+        # Gather the chosen mean and std
+        chosen_mu = torch.gather(mu, 1, idx).squeeze(1)   # (B, H)
+        chosen_std = torch.gather(std, 1, idx).squeeze(1) # (B, H)
 
-def mdn_loss(
-    z_target: torch.Tensor,
-    mu_predict: torch.Tensor,
-    log_std_predict: torch.Tensor,
-    log_weights_predict: torch.Tensor,
-    eps: float=1e-8,
-) -> torch.Tensor:
-    """
-    z_target: (B*T, z_size)
-    mu: (B*T, num_mixture, z_size)
-    log_std: (B*T, num_mixture, z_size)
-    log_weights: (B*T, num_mixture, z_size)
-    """
-    std_predict = log_std_predict.exp()
-    m = Normal(loc=mu_predict, scale=std_predict)
-    log_prob = m.log_prob(z_target).sum(dim=-1)
-    loss = -torch.logsumexp(log_weights_predict + log_prob, dim=1).mean()
+        if deterministic:
+            return chosen_mu
+        else:
+            # Sample from the chosen Gaussian
+            # Use the reparameterization trick if you need gradients (torch.randn_like)
+            eps = torch.randn_like(chosen_mu)
+            return chosen_mu + eps * chosen_std
+    
+    @classmethod
+    def calculate_loss(cls, z_target, mu, log_std, log_weights, eps=1e-8):
+        std = log_std.exp()
+        weights = log_weights.exp()
+        
+        # z_target: (B, z_size) -> (B, 1, z_size)
+        z_target = z_target.unsqueeze(1)
+        
+        # Create the Normal distribution
+        # (B, K, z_size)
+        dist = Normal(loc=mu, scale=std + eps)
+        
+        # Calculate log probability: (B, K, z_size)
+        log_prob = dist.log_prob(z_target)
+        
+        # Sum across the z_size dimension (assuming independent dimensions)
+        # (B, K)
+        log_prob = torch.sum(log_prob, dim=-1)
+        
+        # Combine with weights: log(w * prob) = log(w) + log(prob)
+        # (B, K)
+        weighted_log_prob = log_prob + torch.log(weights + eps)
+        
+        # Use logsumexp across the mixtures (K) for stability
+        # (B,)
+        loss = -torch.logsumexp(weighted_log_prob, dim=-1)
+        
+        return loss.mean()
 
-    return loss
 
 
 class MDNRNN(nn.Module):
@@ -77,6 +113,7 @@ class MDNRNN(nn.Module):
         self,
         action_space: gym.spaces.Discrete,
         z_size: int,
+        rollout_time_length: int = 128,
         hidden_size: int = 256,
         predict_reward: bool = True,
         predict_done: bool = True,
@@ -85,7 +122,9 @@ class MDNRNN(nn.Module):
     ) -> None:
         super().__init__(*args, **kwargs)
 
+        self.z_size = z_size
         self.a_size = action_space.n
+        self.rollout_time_length = rollout_time_length
         self.predict_reward = predict_reward
         self.predict_done = predict_done
         self.hidden_size = hidden_size
@@ -137,7 +176,11 @@ class MDNRNN(nn.Module):
         return mu, log_std, log_weights, h_n, r, d
 
     def predict_next_z(
-        self, mu: torch.Tensor, log_std: torch.Tensor, log_weights: torch.Tensor, deterministic=True
+        self,
+        mu: torch.Tensor,
+        log_std: torch.Tensor,
+        log_weights: torch.Tensor,
+        deterministic=True,
     ) -> torch.Tensor:
         """
         mu: torch.Tensor (B, K, H)
@@ -160,7 +203,7 @@ class MDNRNN(nn.Module):
         # TODO: Verify
         # TODO: Implement mask
         z_target = z_target.view(-1, 1, z_target.size(-1))  # (B*T, 1, z_size)
-        loss = mdn_loss(z_target, mu_predict, log_std_predict, log_weights_predict)
+        loss = MixtureDensityHead.calculate_loss(z_target, mu_predict, log_std_predict, log_weights_predict)
 
         if self.predict_reward and r_target is not None and r_predict is not None:
             loss += mse_loss(r_predict, r_target.view(-1, 1))
@@ -172,7 +215,15 @@ class MDNRNN(nn.Module):
 
         return loss
 
-    def initial_state(self) -> torch.Tensor: ...
+    def get_initial_state(
+        self, batch_size: int, batch: bool, device: str
+    ) -> torch.Tensor:
+        if batch:
+            h_0 = torch.zeros(1, batch_size, self.z_size).to(device)
+        else:
+            h_0 = torch.zeros(1, self.z_size).to(device)
+
+        return h_0
 
 
 if __name__ == "__main__":

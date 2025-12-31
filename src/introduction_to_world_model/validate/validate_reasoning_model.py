@@ -1,8 +1,8 @@
 """
 Play in dream
 """
-
-import numpy as np
+from collections import deque
+from typing import Deque
 
 import torch
 
@@ -29,7 +29,12 @@ def validate_vision_model(
 
     obs, _ = env.reset()
     dream_obs = obs.copy()
-    h = None
+    h = agent.reasoning_model.get_initial_state(batch=False)
+    z_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length)
+    a_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length)
+    h_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length)
+    
+    # Play in dream
     for step in range(n_steps):
         a = env.action_space.sample()
         a_torch = torch.tensor(a).to(device)
@@ -38,15 +43,26 @@ def validate_vision_model(
             .view(1, 1, -1)
             .to(torch.float32)
         )
+        a_by_time.append(a_torch)
+        h_by_time.append(h)
         with torch.no_grad():
+            # Get latent from Vision Model's encoder
             mu, log_std = agent.vision_model.encode(
-                torch.tensor(obs, device=device).unsqueeze(0)
+                torch.tensor(dream_obs, device=device).unsqueeze(0)
             )
-            z = agent.vision_model.reparameterize(mu, log_std).unsqueeze(0)
-            mu, log_std, log_weights, h, _, _ = agent.reasoning_model.forward(
-                z, a_torch
+            z = agent.vision_model.reparameterize(mu, log_std)
+            z_by_time.append(z)
+
+            # MDN-RNN inference
+            z_accumulate = torch.tensor(z_by_time).to(device).unsqueeze(0)
+            a_accumulate = torch.tensor(a_by_time).to(device).unsqueeze(0)
+            h_accumulate = torch.tensor(h_by_time).to(device).unsqueeze(0)
+            
+            mu, log_std, log_weights, h_n, _, _ = agent.reasoning_model.forward(
+                z_accumulate, a_accumulate, h_accumulate
             )
-            dream_z = agent.reasoning_model.predict_next_z(mu, log_std, log_weights)
+            h = h_n
+            dream_z = agent.reasoning_model.predict_next_z(mu, log_std, log_weights, True)
             dream_obs = agent.vision_model.decode(dream_z)
 
             true_obs, _, _, _, _ = env.step(a)

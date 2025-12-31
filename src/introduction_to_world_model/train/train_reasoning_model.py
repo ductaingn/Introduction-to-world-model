@@ -151,7 +151,7 @@ def train_reasoning_model(
                 r_target = torch.tensor(r_target).to(device)
                 done_target = torch.tensor(np.max([term, trunc], axis=0)).to(device)
 
-                mu, log_std, log_weights, h_n, r_predict, done_predict = (
+                mu, log_std, log_weights, _, r_predict, done_predict = (
                     agent.reasoning_model.forward(z, act)
                 )
                 loss = agent.reasoning_model.compute_loss(
@@ -189,6 +189,9 @@ def train_reasoning_model(
                 wandb.log(
                     {
                         "Loss": current_loss,
+                        "Mean absolute Mu": mu.abs().mean().detach().cpu().numpy(),
+                        "Mean absolute LogVar": log_std.abs().mean().detach().cpu().numpy(),
+                        "Mean absolute LogWeights": log_weights.abs().mean().detach().cpu().numpy(),
                     }
                 )
 
@@ -207,7 +210,7 @@ if __name__ == "__main__":
         agent,
         20,
         batch_size=64,
-        rollout_time_length=128,
+        rollout_time_length=agent.reasoning_model.rollout_time_length,
         learning_rate=1e-4,
         device="cuda:0",
         save_path="checkpoint/trained_reasoning_model.pt",
