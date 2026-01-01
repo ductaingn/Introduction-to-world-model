@@ -120,6 +120,7 @@ class MDNRNN(nn.Module):
         z_size: int,
         rollout_time_length: int = 512,
         hidden_size: int = 256,
+        n_rnn_layers: int = 1,
         predict_reward: bool = False,
         predict_done: bool = False,
         *args,
@@ -133,6 +134,7 @@ class MDNRNN(nn.Module):
         self.predict_reward = predict_reward
         self.predict_done = predict_done
         self.hidden_size = hidden_size
+        self.n_rnn_layers = n_rnn_layers
 
         self.gru = nn.GRU(
             input_size=self.a_size + z_size,
@@ -221,12 +223,13 @@ class MDNRNN(nn.Module):
         return loss
 
     def get_initial_state(
-        self, batch_size: int, batch: bool, device: str
+        self, *, batch: bool, batch_size: int=None, device: str="cpu"
     ) -> torch.Tensor:
         if batch:
-            h_0 = torch.zeros(1, batch_size, self.z_size).to(device)
+            assert batch_size is not None, ("You must provide batch size!")
+            h_0 = torch.zeros(batch_size, self.n_rnn_layers, self.hidden_size).to(device)
         else:
-            h_0 = torch.zeros(1, self.z_size).to(device)
+            h_0 = torch.zeros(self.n_rnn_layers, self.hidden_size).to(device)
 
         return h_0
 

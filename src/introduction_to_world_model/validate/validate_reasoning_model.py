@@ -29,10 +29,9 @@ def validate_vision_model(
 
     obs, _ = env.reset()
     dream_obs = obs.copy()
-    h = agent.reasoning_model.get_initial_state(batch=False)
-    z_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length)
-    a_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length)
-    h_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length)
+    h = agent.reasoning_model.get_initial_state(batch=True, batch_size=1, device=device)
+    z_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length) # (T, H)
+    a_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length) # (T, H)
     
     # Play in dream
     for step in range(n_steps):
@@ -40,37 +39,35 @@ def validate_vision_model(
         a_torch = torch.tensor(a).to(device)
         a_torch = (
             torch.nn.functional.one_hot(a_torch, num_classes=env.action_space.n)
-            .view(1, 1, -1)
             .to(torch.float32)
-        )
+        ) # (T, H)
         a_by_time.append(a_torch)
-        h_by_time.append(h)
         with torch.no_grad():
             # Get latent from Vision Model's encoder
             mu, log_std = agent.vision_model.encode(
-                torch.tensor(dream_obs, device=device).unsqueeze(0)
+                torch.tensor(dream_obs, device=device).unsqueeze(0) # (B, H)
             )
-            z = agent.vision_model.reparameterize(mu, log_std)
-            z_by_time.append(z)
+            z = agent.vision_model.reparameterize(mu, log_std) # (T, H) (Actually it's (B, H) but B=1=T so we can consider it (T, H))
+            z_by_time.append(z.squeeze(0))
 
             # MDN-RNN inference
-            z_accumulate = torch.tensor(z_by_time).to(device).unsqueeze(0)
-            a_accumulate = torch.tensor(a_by_time).to(device).unsqueeze(0)
-            h_accumulate = torch.tensor(h_by_time).to(device).unsqueeze(0)
+            z_rollout = torch.stack(list(z_by_time), dim=0).unsqueeze(0).to(device) # (B, T, H)
+            a_rollout = torch.stack(list(a_by_time), dim=0).unsqueeze(0).to(device)
+            h = h
             
-            mu, log_std, log_weights, h_n, _, _ = agent.reasoning_model.forward(
-                z_accumulate, a_accumulate, h_accumulate
+            seq_mu, seq_log_std, seq_log_weights, h_n, _, _ = agent.reasoning_model.forward(
+                z_rollout, a_rollout, h
             )
-            h = h_n
-            dream_z = agent.reasoning_model.predict_next_z(mu, log_std, log_weights, True)
-            dream_obs = agent.vision_model.decode(dream_z)
+            mu, log_std, log_weights, h = seq_mu[-1].unsqueeze(0), seq_log_std[-1].unsqueeze(0), seq_log_weights[-1].unsqueeze(0), h_n
+            dream_z = agent.reasoning_model.predict_next_z(mu, log_std, log_weights, True) # (B, H)
+            dream_obs = agent.vision_model.decode(dream_z).squeeze(0)
 
-            true_obs, _, _, _, _ = env.step(a)
-            print(
-                f"Dream-truth diff: {torch.nn.functional.mse_loss(dream_obs, torch.tensor(true_obs).to(device)).cpu().numpy():.3f}"
-            )
+        true_obs, _, _, _, _ = env.step(a)
+        print(
+            f"Dream-truth diff: {torch.nn.functional.mse_loss(dream_obs, torch.tensor(true_obs).to(device)).cpu().numpy():.3f}"
+        )
 
-        dream_obs = (dream_obs.squeeze(0).cpu().numpy() + 1.0) / 2.0
+        dream_obs = (dream_obs.cpu().numpy() + 1.0) / 2.0
         true_obs = (true_obs + 1.0) / 2.0
 
         # Convert tensors to numpy for plotting
