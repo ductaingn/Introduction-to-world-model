@@ -167,6 +167,7 @@ def train_reasoning_model(
                 )
                 optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(agent.reasoning_model.parameters(), max_norm=1.0)
                 optimizer.step()
 
                 current_loss = loss.item()
@@ -205,6 +206,7 @@ def train_reasoning_model(
     if save_path is not None:
         agent.save_checkpoint(save_path, vision_optimizer=optimizer)
 
+    return optimizer
 
 if __name__ == "__main__":
     env = Env(render_mode=None)

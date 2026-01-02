@@ -138,6 +138,7 @@ def train_vision_model(
     if save_path is not None:
         agent.save_checkpoint(save_path, vision_optimizer=optimizer)
 
+    return optimizer
 
 if __name__ == "__main__":
     env = Env()
