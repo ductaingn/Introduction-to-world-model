@@ -168,12 +168,12 @@ class MDNRNN(nn.Module):
         mu: torch.Tensor,
         log_std: torch.Tensor,
         log_weights: torch.Tensor,
-        temparture: float=1.0,
+        temperture: float=0.1,
     ) -> torch.Tensor:
         """
         mu: torch.Tensor (B, T, K, H)
         """
-        next_z = self.mdn.sample(mu, log_std, log_weights, temparture)
+        next_z = self.mdn.sample(mu, log_std, log_weights, temperture)
 
         return next_z
 

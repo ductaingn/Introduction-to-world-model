@@ -57,36 +57,26 @@ def validate_vision_model(
             seq_dream_obs = agent.vision_model.decode(seq_dream_z).squeeze(0) # (T, H)
         
         seq_dream_obs = seq_dream_obs.cpu().numpy()
-        seq_true_obs = seq_true_obs # (T, H)
+        seq_true_obs = seq_true_obs.squeeze(0) # (T, H)
 
-        window_name = "Dream obs"
+        window_name = "True | Dream"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         for dream_obs, true_obs in zip(seq_dream_obs, seq_true_obs):
-            dream_obs = ((dream_obs + 1.0) / 2.0 + 255).astype(np.uint8)
-            true_obs = ((true_obs + 1.0) / 2.0 + 255).astype(np.uint8)
+            dream_obs = ((dream_obs + 1.0) / 2.0 * 255).astype(np.uint8)
+            true_obs = ((true_obs + 1.0) / 2.0 * 255).astype(np.uint8)
 
-            cv2.imshow(window_name, dream_obs)
+            pad_width = 10  # pixels
+            h, _, c = true_obs.shape
+            white_pad = np.full((h, pad_width, c), 255, dtype=np.uint8)
+
+            combined = np.concatenate([true_obs, white_pad, dream_obs], axis=1)
+
+            cv2.imshow(window_name, combined)
 
             if cv2.waitKey(25) & 0xFF == ord('q'):
                 break
 
         cv2.destroyAllWindows()
-            # Convert tensors to numpy for plotting
-            # Create the figure
-            # fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-            # axes[0].imshow(true_obs)
-            # axes[0].set_title(f"Ground truth observation ({mode.value})")
-            # axes[0].axis("off")
-
-            # axes[1].imshow(dream_obs)
-            # axes[1].set_title("Dream observation")
-            # axes[1].axis("off")
-
-            # plt.show(block=False)  # Show without blocking code execution
-            # plt.pause(1)  # Brief pause to allow the window to render
-
-            # plt.close(fig)  # Close the window before the next iteration
     
     elif mode == ValidateMode.OOD:
         seq_obs, _ = env.reset()
