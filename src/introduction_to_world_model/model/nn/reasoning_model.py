@@ -23,93 +23,77 @@ class MixtureDensityHead(nn.Module):
         )
         self.mu = nn.Linear(256, num_mixture * z_size)
         self.log_std = nn.Linear(256, num_mixture * z_size)
-        self.log_weights = nn.Linear(256, num_mixture)
+        self.log_weights = nn.Linear(256, num_mixture * z_size)
 
-    def forward(
-        self, rnn_output: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Parameters
-        ----------
-        rnn_output: torch.Tensor
-            Output of RNN network (B*T, H)
-        """
-        rnn_output = self.base(rnn_output)
+    def forward(self, rnn_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # rnn_output shape can be (B, T, H) or (B*T, H)
+        is_3d = len(rnn_output.shape) == 3
+        if is_3d:
+            B, T, H = rnn_output.shape
+        
+        flat_rnn_out = rnn_output.reshape(-1, rnn_output.shape[-1])
+        x = self.base(flat_rnn_out)
 
-        mu = self.mu(rnn_output)  # (B*T, K*H)
-        log_std = self.log_std(rnn_output)  # (B*T, K*H)
-        log_weights = self.log_weights(rnn_output)  # (B*T, K)
+        mu = self.mu(x).view(-1, self.z_size, self.num_mixture)
+        log_std = torch.clamp(self.log_std(x).view(-1, self.z_size, self.num_mixture), -5.0, 2.0)
+        
+        # Calculate log_pi and ensure it sums to 1 across the mixture dim (-1)
+        log_pi = self.log_weights(x).view(-1, self.z_size, self.num_mixture)
+        log_pi = torch.log_softmax(log_pi, dim=-1)
 
-        mu = mu.view(-1, self.num_mixture, self.z_size)
-        log_std = log_std.view(-1, self.num_mixture, self.z_size)
-        log_weights = log_softmax(log_weights, dim=-1)
+        # If input was (B, T, H), return (B, T, H, K)
+        if is_3d:
+            mu = mu.view(B, T, self.z_size, self.num_mixture)
+            log_std = log_std.view(B, T, self.z_size, self.num_mixture)
+            log_pi = log_pi.view(B, T, self.z_size, self.num_mixture)
 
-        return mu, log_std, log_weights
+        return mu, log_std, log_pi
 
     def sample(
         self,
-        mu: torch.Tensor,        # (B, K, H)
-        log_std: torch.Tensor,       # (B, K, H)
-        log_weights: torch.Tensor,   # (B, K)
-        deterministic: bool = False,
+        mu: torch.Tensor,        # (B, T, H, K)
+        log_std: torch.Tensor,       # (B, T, H, K)
+        log_weights: torch.Tensor,   # (B, T, H, K)
+        temperature=1.0
     ) -> torch.Tensor:
-        B, K, H = mu.shape
-        std = log_std.exp()
-        weights = log_weights.exp()
-
-        if deterministic:
-            # Pick the mixture component with the highest weight
-            chosen_distr_ind = torch.argmax(weights, dim=-1) # Shape: (B)
-        else:
-            # Sample a component index based on the weights
-            cat = Categorical(probs=weights)
-            chosen_distr_ind = cat.sample() # Shape: (B)
-
-        # We need to reshape the index to (B, 1, H) to use torch.gather
-        # This allows us to pick the specific K-dimension for each Batch
-        idx = chosen_distr_ind.view(B, 1, 1).expand(B, 1, H)
+        log_weights = log_weights / temperature
+        weights = torch.softmax(log_weights, dim=-1)
         
-        # Gather the chosen mean and std
-        chosen_mu = torch.gather(mu, 1, idx).squeeze(1)   # (B, H)
-        chosen_std = torch.gather(std, 1, idx).squeeze(1) # (B, H)
-
-        if deterministic:
-            return chosen_mu
-        else:
-            # Sample from the chosen Gaussian
-            # Use the reparameterization trick if you need gradients (torch.randn_like)
-            eps = torch.randn_like(chosen_mu)
-            return chosen_mu + eps * chosen_std
+        # 2. Scale standard deviation
+        std = (log_std.exp()) * math.sqrt(temperature)
+        
+        # 3. Sample mixture indices for each dimension
+        # Shape: (B, T, z_size, 1)
+        cat = torch.distributions.Categorical(probs=weights)
+        indices = cat.sample().unsqueeze(-1)
+        
+        # 4. Gather the chosen mu and std
+        chosen_mu = torch.gather(mu, -1, indices).squeeze(-1)
+        chosen_std = torch.gather(std, -1, indices).squeeze(-1)
+        
+        # 5. Final Gaussian sample
+        epsilon = torch.randn_like(chosen_mu)
+        return chosen_mu + epsilon * chosen_std
     
     @classmethod
-    def calculate_loss(cls, z, mu, log_std, log_pi) -> torch.Tensor:
-        """
-        z:        (B, z_size)
-        mu:       (B, K, z_size)
-        log_std:  (B, K, z_size)
-        log_pi:   (B, K)          (log-softmaxed!)
-        """
+    def calculate_loss(cls, z_target, mu, log_std, log_pi, mask=None) -> torch.Tensor:
+        # Match dimensions: z_target (B, T, Z) -> (B, T, Z, 1)
+        z_target = z_target.unsqueeze(-1)
 
-        B, K, Z = mu.shape
+        # Standard MDN Log-Probability
+        # Using a small eps for variance stability is a good practice
+        variance = (2.0 * log_std).exp()
+        log_prob = -0.5 * ((z_target - mu)**2 / variance) - log_std - LOG_SQRT_2PI
 
-        # Expand z to (B, 1, z_size) WITHOUT materializing K copies
-        z = z.view(-1, 1, z.shape[-1])
+        # LogSumExp over the K mixtures
+        weighted_log_prob = log_pi + log_prob
+        loss = -torch.logsumexp(weighted_log_prob, dim=-1) # (B, T, Z)
 
-        # Gaussian log-likelihood, computed manually
-        # (B, K, z_size)
-        log_prob = -0.5 * ((z - mu) / log_std.exp()) ** 2 \
-                - log_std \
-                - LOG_SQRT_2PI
-
-        # Sum over z dimensions → (B, K)
-        log_prob = log_prob.sum(dim=-1)
-
-        # Add mixture weights
-        log_prob = log_prob + log_pi
-
-        # LogSumExp over mixtures → (B,)
-        loss = -torch.logsumexp(log_prob, dim=1)
-
+        if mask is not None:
+            # mask shape (B, T) or (B, T, 1)
+            loss = loss * mask.view(loss.size(0), loss.size(1), 1)
+            return loss.sum() / (mask.sum() * mu.size(-2)) # Normalized by unmasked elements
+            
         return loss.mean()
 
 
@@ -172,9 +156,6 @@ class MDNRNN(nn.Module):
         x = torch.concat([z, a], dim=-1)
         output, h_n = self.gru(x, h)
 
-        B, T, H = output.shape
-        output = output.reshape(B * T, H)
-
         mu, log_std, log_weights = self.mdn(output)
 
         r = None if not self.predict_reward else self.reward_head(output)
@@ -187,12 +168,12 @@ class MDNRNN(nn.Module):
         mu: torch.Tensor,
         log_std: torch.Tensor,
         log_weights: torch.Tensor,
-        deterministic=True,
+        temparture: float=1.0,
     ) -> torch.Tensor:
         """
-        mu: torch.Tensor (B, K, H)
+        mu: torch.Tensor (B, T, K, H)
         """
-        next_z = self.mdn.sample(mu, log_std, log_weights, deterministic)
+        next_z = self.mdn.sample(mu, log_std, log_weights, temparture)
 
         return next_z
 
@@ -209,7 +190,6 @@ class MDNRNN(nn.Module):
     ) -> torch.Tensor:
         # TODO: Verify
         # TODO: Implement mask
-        z_target = z_target.view(-1, 1, z_target.size(-1))  # (B*T, 1, z_size)
         loss = MixtureDensityHead.calculate_loss(z_target, mu_predict, log_std_predict, log_weights_predict)
 
         if self.predict_reward and r_target is not None and r_predict is not None:

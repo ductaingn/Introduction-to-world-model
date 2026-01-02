@@ -55,8 +55,8 @@ def get_rollout_batch_with_z(
         next_z = next_z.view(B, T, -1)
 
     return (
-        None,  # obs (unused)
-        None,  # next_obs (unused)
+        obs,
+        next_obs,
         act.reshape(B, T, -1),
         reward.reshape(B, T),
         terminated.reshape(B, T),
@@ -66,6 +66,7 @@ def get_rollout_batch_with_z(
     )
 
 
+# TODO: Implement temparature
 def train_reasoning_model(
     agent: WorldModel,
     n_epochs: int,
@@ -186,9 +187,13 @@ def train_reasoning_model(
                     ),
                 )
 
+                with torch.no_grad():
+                    sq_next_z_diff = torch.mean((mu.mean(dim=-1) - next_z)**2)
+
                 wandb.log(
                     {
                         "Loss": current_loss,
+                        "Square Z_{next} diff": sq_next_z_diff.detach().cpu().numpy(),
                         "Mean absolute Mu": mu.abs().mean().detach().cpu().numpy(),
                         "Mean absolute LogVar": log_std.abs().mean().detach().cpu().numpy(),
                         "Mean absolute LogWeights": log_weights.abs().mean().detach().cpu().numpy(),
@@ -208,7 +213,7 @@ if __name__ == "__main__":
 
     train_reasoning_model(
         agent,
-        20,
+        8,
         batch_size=16,
         rollout_time_length=agent.reasoning_model.rollout_time_length,
         learning_rate=1e-4,
