@@ -67,23 +67,31 @@ def validate_vision_model(
         seq_dream_obs = seq_dream_obs.cpu().numpy()
         seq_true_obs = seq_true_obs.squeeze(0)  # (T, H)
 
+        pad_width = 10
+        h, w, c = seq_dream_obs[0].shape
+        white_pad = np.full((h, pad_width, c), 255, dtype=np.uint8)
+        frame_w = w * 2 + pad_width
+
         window_name = "True | Dream"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(
+            "results/reasoning_model/dream.mp4", fourcc, 24, (frame_w, h)
+        )
+
         for dream_obs, true_obs in zip(seq_dream_obs, seq_true_obs):
             dream_obs = ((dream_obs + 1.0) / 2.0 * 255).astype(np.uint8)
             true_obs = ((true_obs + 1.0) / 2.0 * 255).astype(np.uint8)
 
-            pad_width = 10  # pixels
-            h, _, c = true_obs.shape
-            white_pad = np.full((h, pad_width, c), 255, dtype=np.uint8)
-
             combined = np.concatenate([true_obs, white_pad, dream_obs], axis=1)
 
+            video_writer.write(combined)
             cv2.imshow(window_name, combined)
 
             if cv2.waitKey(25) & 0xFF == ord("q"):
                 break
 
+        video_writer.release()
         cv2.destroyAllWindows()
 
     elif mode == ValidateMode.OOD:
