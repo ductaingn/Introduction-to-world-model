@@ -77,7 +77,7 @@ def train_reasoning_model(
     save_path: str | None = None,
     load_path: str | None = None,
 ):
-    wandb.init(
+    run = wandb.init(
         project="introduction_to_world_model",
     )
     wandb.watch(agent.reasoning_model, log_freq=10)
@@ -85,7 +85,13 @@ def train_reasoning_model(
     optimizer = AdamW(agent.reasoning_model.parameters(), lr=learning_rate)
 
     if load_path is not None:
-        agent.load_checkpoint(load_path, device=device, load_vision_model=True, load_reasoning_model=False, load_policy_model=False)
+        agent.load_checkpoint(
+            load_path,
+            device=device,
+            load_vision_model=True,
+            load_reasoning_model=False,
+            load_policy_model=False,
+        )
     else:
         warnings.warn(
             "\nNo pre-trained vision model loaded!\nYou should train vision model before training reasoning model, otherwise the model can not learn meaningful representation and reasoning!"
@@ -167,7 +173,9 @@ def train_reasoning_model(
                 )
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(agent.reasoning_model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(
+                    agent.reasoning_model.parameters(), max_norm=1.0
+                )
                 optimizer.step()
 
                 current_loss = loss.item()
@@ -189,15 +197,23 @@ def train_reasoning_model(
                 )
 
                 with torch.no_grad():
-                    sq_next_z_diff = torch.mean((mu.mean(dim=-1) - next_z)**2)
+                    sq_next_z_diff = torch.mean((mu.mean(dim=-1) - next_z) ** 2)
 
                 wandb.log(
                     {
                         "Loss": current_loss,
                         "Square Z_{next} diff": sq_next_z_diff.detach().cpu().numpy(),
                         "Mean absolute Mu": mu.abs().mean().detach().cpu().numpy(),
-                        "Mean absolute LogVar": log_std.abs().mean().detach().cpu().numpy(),
-                        "Mean absolute LogWeights": log_weights.abs().mean().detach().cpu().numpy(),
+                        "Mean absolute LogVar": log_std.abs()
+                        .mean()
+                        .detach()
+                        .cpu()
+                        .numpy(),
+                        "Mean absolute LogWeights": log_weights.abs()
+                        .mean()
+                        .detach()
+                        .cpu()
+                        .numpy(),
                     }
                 )
 
@@ -206,7 +222,10 @@ def train_reasoning_model(
     if save_path is not None:
         agent.save_checkpoint(save_path, vision_optimizer=optimizer)
 
+    run.finish()
+
     return optimizer
+
 
 if __name__ == "__main__":
     env = Env(render_mode=None)

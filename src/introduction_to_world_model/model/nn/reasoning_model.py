@@ -20,26 +20,32 @@ class MixtureDensityHead(nn.Module):
         self.base = nn.Sequential(
             nn.Linear(rnn_hidden_size, 256),
             nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
         )
         self.mu = nn.Linear(256, num_mixture * z_size)
         self.log_std = nn.Linear(256, num_mixture * z_size)
         self.log_weights = nn.Linear(256, num_mixture * z_size)
 
-    def forward(self, rnn_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, rnn_output: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # rnn_output shape can be (B, T, H) or (B*T, H)
         is_3d = len(rnn_output.shape) == 3
         if is_3d:
             B, T, H = rnn_output.shape
-        
+
         flat_rnn_out = rnn_output.reshape(-1, rnn_output.shape[-1])
         x = self.base(flat_rnn_out)
 
         mu = self.mu(x).view(-1, self.z_size, self.num_mixture)
-        log_std = torch.clamp(self.log_std(x).view(-1, self.z_size, self.num_mixture), -5.0, 2.0)
-        
+        log_std = torch.clamp(
+            self.log_std(x).view(-1, self.z_size, self.num_mixture), -5.0, 2.0
+        )
+
         # Calculate log_pi and ensure it sums to 1 across the mixture dim (-1)
         log_pi = self.log_weights(x).view(-1, self.z_size, self.num_mixture)
-        log_pi = torch.log_softmax(log_pi, dim=-1)
+        log_pi = log_softmax(log_pi, dim=-1)
 
         # If input was (B, T, H), return (B, T, H, K)
         if is_3d:
@@ -51,30 +57,30 @@ class MixtureDensityHead(nn.Module):
 
     def sample(
         self,
-        mu: torch.Tensor,        # (B, T, H, K)
-        log_std: torch.Tensor,       # (B, T, H, K)
-        log_weights: torch.Tensor,   # (B, T, H, K)
-        temperature=1.0
+        mu: torch.Tensor,  # (B, T, H, K)
+        log_std: torch.Tensor,  # (B, T, H, K)
+        log_weights: torch.Tensor,  # (B, T, H, K)
+        temperature=1.0,
     ) -> torch.Tensor:
         log_weights = log_weights / temperature
         weights = torch.softmax(log_weights, dim=-1)
-        
+
         # 2. Scale standard deviation
         std = (log_std.exp()) * math.sqrt(temperature)
-        
+
         # 3. Sample mixture indices for each dimension
         # Shape: (B, T, z_size, 1)
-        cat = torch.distributions.Categorical(probs=weights)
+        cat = Categorical(probs=weights)
         indices = cat.sample().unsqueeze(-1)
-        
+
         # 4. Gather the chosen mu and std
         chosen_mu = torch.gather(mu, -1, indices).squeeze(-1)
         chosen_std = torch.gather(std, -1, indices).squeeze(-1)
-        
+
         # 5. Final Gaussian sample
         epsilon = torch.randn_like(chosen_mu)
         return chosen_mu + epsilon * chosen_std
-    
+
     @classmethod
     def calculate_loss(cls, z_target, mu, log_std, log_pi, mask=None) -> torch.Tensor:
         # Match dimensions: z_target (B, T, Z) -> (B, T, Z, 1)
@@ -83,17 +89,19 @@ class MixtureDensityHead(nn.Module):
         # Standard MDN Log-Probability
         # Using a small eps for variance stability is a good practice
         variance = (2.0 * log_std).exp()
-        log_prob = -0.5 * ((z_target - mu)**2 / variance) - log_std - LOG_SQRT_2PI
+        log_prob = -0.5 * ((z_target - mu) ** 2 / variance) - log_std - LOG_SQRT_2PI
 
         # LogSumExp over the K mixtures
         weighted_log_prob = log_pi + log_prob
-        loss = -torch.logsumexp(weighted_log_prob, dim=-1) # (B, T, Z)
+        loss = -torch.logsumexp(weighted_log_prob, dim=-1)  # (B, T, Z)
 
         if mask is not None:
             # mask shape (B, T) or (B, T, 1)
             loss = loss * mask.view(loss.size(0), loss.size(1), 1)
-            return loss.sum() / (mask.sum() * mu.size(-2)) # Normalized by unmasked elements
-            
+            return loss.sum() / (
+                mask.sum() * mu.size(-2)
+            )  # Normalized by unmasked elements
+
         return loss.mean()
 
 
@@ -168,7 +176,7 @@ class MDNRNN(nn.Module):
         mu: torch.Tensor,
         log_std: torch.Tensor,
         log_weights: torch.Tensor,
-        temperture: float=0.1,
+        temperture: float = 0.1,
     ) -> torch.Tensor:
         """
         mu: torch.Tensor (B, T, K, H)
@@ -188,9 +196,10 @@ class MDNRNN(nn.Module):
         done_target: torch.Tensor | None,
         done_predict: torch.Tensor | None,
     ) -> torch.Tensor:
-        # TODO: Verify
         # TODO: Implement mask
-        loss = MixtureDensityHead.calculate_loss(z_target, mu_predict, log_std_predict, log_weights_predict)
+        loss = MixtureDensityHead.calculate_loss(
+            z_target, mu_predict, log_std_predict, log_weights_predict
+        )
 
         if self.predict_reward and r_target is not None and r_predict is not None:
             loss += mse_loss(r_predict, r_target.view(-1, 1))
@@ -203,11 +212,13 @@ class MDNRNN(nn.Module):
         return loss
 
     def get_initial_state(
-        self, *, batch: bool, batch_size: int=None, device: str="cpu"
+        self, *, batch: bool, batch_size: int = None, device: str = "cpu"
     ) -> torch.Tensor:
         if batch:
-            assert batch_size is not None, ("You must provide batch size!")
-            h_0 = torch.zeros(batch_size, self.n_rnn_layers, self.hidden_size).to(device)
+            assert batch_size is not None, "You must provide batch size!"
+            h_0 = torch.zeros(batch_size, self.n_rnn_layers, self.hidden_size).to(
+                device
+            )
         else:
             h_0 = torch.zeros(self.n_rnn_layers, self.hidden_size).to(device)
 
@@ -216,16 +227,17 @@ class MDNRNN(nn.Module):
 
 if __name__ == "__main__":
     from torchsummary import summary
+
     device = "cuda:0"
 
-    B, T = 2, 1000
+    B, T, H = 2, 1000, 64
     action_space = gym.spaces.Discrete(3)
-    mdnrnn = MDNRNN(action_space, z_size=128, rollout_time_length=T).to(device)
+    mdnrnn = MDNRNN(action_space, z_size=H, rollout_time_length=T).to(device)
     summary(mdnrnn)
 
     # latent states
-    z = torch.rand(B, T, 128).to(device)
-    next_z = torch.rand(B, T, 128).to(device)
+    z = torch.rand(B, T, H).to(device)
+    next_z = torch.rand(B, T, H).to(device)
 
     # actions (one-hot)
     a = (

@@ -1,6 +1,7 @@
 """
 Play in dream
 """
+
 from collections import deque
 from typing import Deque
 
@@ -30,9 +31,12 @@ def validate_vision_model(
     agent.reasoning_model.eval()
     agent.policy_model.eval()
     agent.to(device)
-    
+
     if mode == ValidateMode.ID:
-        from introduction_to_world_model.train.train_reasoning_model import get_rollout_batch_with_z
+        from introduction_to_world_model.train.train_reasoning_model import (
+            get_rollout_batch_with_z,
+        )
+
         batch_size = 1
         rollout_time_length = agent.reasoning_model.rollout_time_length
         batch_indices = np.random.choice(
@@ -42,8 +46,10 @@ def validate_vision_model(
         )
 
         with torch.no_grad():
-            seq_obs, seq_true_obs, seq_act, _, _, _, seq_z, seq_next_z = get_rollout_batch_with_z(
-                agent, batch_indices, rollout_time_length, device
+            seq_obs, seq_true_obs, seq_act, _, _, _, seq_z, seq_next_z = (
+                get_rollout_batch_with_z(
+                    agent, batch_indices, rollout_time_length, device
+                )
             )
 
             seq_z = torch.tensor(seq_z).to(device)
@@ -53,11 +59,13 @@ def validate_vision_model(
             seq_mu, seq_log_std, seq_log_weights, h_n, _, _ = (
                 agent.reasoning_model.forward(seq_z, seq_act)
             )
-            seq_dream_z = agent.reasoning_model.predict_next_z(seq_mu, seq_log_std, seq_log_weights) # (B, T, H)
-            seq_dream_obs = agent.vision_model.decode(seq_dream_z).squeeze(0) # (T, H)
-        
+            seq_dream_z = agent.reasoning_model.predict_next_z(
+                seq_mu, seq_log_std, seq_log_weights
+            )  # (B, T, H)
+            seq_dream_obs = agent.vision_model.decode(seq_dream_z).squeeze(0)  # (T, H)
+
         seq_dream_obs = seq_dream_obs.cpu().numpy()
-        seq_true_obs = seq_true_obs.squeeze(0) # (T, H)
+        seq_true_obs = seq_true_obs.squeeze(0)  # (T, H)
 
         window_name = "True | Dream"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -73,45 +81,61 @@ def validate_vision_model(
 
             cv2.imshow(window_name, combined)
 
-            if cv2.waitKey(25) & 0xFF == ord('q'):
+            if cv2.waitKey(25) & 0xFF == ord("q"):
                 break
 
         cv2.destroyAllWindows()
-    
+
     elif mode == ValidateMode.OOD:
         seq_obs, _ = env.reset()
         dream_obs = seq_obs.copy()
-        h = agent.reasoning_model.get_initial_state(batch=True, batch_size=1, device=device)
-        z_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length) # (T, H)
-        a_by_time: Deque[torch.Tensor] = deque(maxlen=agent.reasoning_model.rollout_time_length) # (T, H)
+        h = agent.reasoning_model.get_initial_state(
+            batch=True, batch_size=1, device=device
+        )
+        z_by_time: Deque[torch.Tensor] = deque(
+            maxlen=agent.reasoning_model.rollout_time_length
+        )  # (T, H)
+        a_by_time: Deque[torch.Tensor] = deque(
+            maxlen=agent.reasoning_model.rollout_time_length
+        )  # (T, H)
 
         # Play in dream
         for step in range(n_steps):
             a = env.action_space.sample()
             a_torch = torch.tensor(a).to(device)
-            a_torch = (
-                torch.nn.functional.one_hot(a_torch, num_classes=env.action_space.n)
-                .to(torch.float32)
-            ) # (T, H)
+            a_torch = torch.nn.functional.one_hot(
+                a_torch, num_classes=env.action_space.n
+            ).to(torch.float32)  # (T, H)
             a_by_time.append(a_torch)
             with torch.no_grad():
                 # Get latent from Vision Model's encoder
                 mu, log_std = agent.vision_model.encode(
-                    torch.tensor(dream_obs, device=device).unsqueeze(0) # (B, H)
+                    torch.tensor(dream_obs, device=device).unsqueeze(0)  # (B, H)
                 )
-                seq_z = agent.vision_model.reparameterize(mu, log_std) # (T, H) (Actually it's (B, H) but B=1=T so we can consider it (T, H))
+                seq_z = agent.vision_model.reparameterize(
+                    mu, log_std
+                )  # (T, H) (Actually it's (B, H) but B=1=T so we can consider it (T, H))
                 z_by_time.append(seq_z.squeeze(0))
 
                 # MDN-RNN inference
-                z_rollout = torch.stack(list(z_by_time), dim=0).unsqueeze(0).to(device) # (B, T, H)
+                z_rollout = (
+                    torch.stack(list(z_by_time), dim=0).unsqueeze(0).to(device)
+                )  # (B, T, H)
                 a_rollout = torch.stack(list(a_by_time), dim=0).unsqueeze(0).to(device)
                 h = h
-                
-                seq_mu, seq_log_std, seq_log_weights, h_n, _, _ = agent.reasoning_model.forward(
-                    z_rollout, a_rollout, h
+
+                seq_mu, seq_log_std, seq_log_weights, h_n, _, _ = (
+                    agent.reasoning_model.forward(z_rollout, a_rollout, h)
                 )
-                mu, log_std, log_weights, h = seq_mu[-1].unsqueeze(0), seq_log_std[-1].unsqueeze(0), seq_log_weights[-1].unsqueeze(0), h_n
-                dream_z = agent.reasoning_model.predict_next_z(mu, log_std, log_weights, True) # (B, H)
+                mu, log_std, log_weights, h = (
+                    seq_mu[-1].unsqueeze(0),
+                    seq_log_std[-1].unsqueeze(0),
+                    seq_log_weights[-1].unsqueeze(0),
+                    h_n,
+                )
+                dream_z = agent.reasoning_model.predict_next_z(
+                    mu, log_std, log_weights, True
+                )  # (B, H)
                 dream_obs = agent.vision_model.decode(dream_z).squeeze(0)
 
             seq_true_obs, _, _, _, _ = env.step(a)
@@ -145,6 +169,6 @@ if __name__ == "__main__":
     env = Env(render_mode="rgb_array")
 
     agent = WorldModel(env.observation_space, env.action_space)
-    agent.load_checkpoint("checkpoint/trained_reasoning_model.pt", device="cuda:0")
+    agent.load_checkpoint("checkpoint/trained_world_model.pt", device="cuda:0")
 
     validate_vision_model(agent, 1000, ValidateMode.ID, env=env, device="cuda:0")

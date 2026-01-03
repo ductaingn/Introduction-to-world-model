@@ -28,9 +28,11 @@ def train_vision_model(
     load_path: str | None = None,
 ):
     if len(agent.replay_buffer) == 0:
-        raise RuntimeError("Agent replay buffer is empty! You must collect data first! Hint: Use <WorldModel>.collect_data(<env>).")
+        raise RuntimeError(
+            "Agent replay buffer is empty! You must collect data first! Hint: Use <WorldModel>.collect_data(<env>)."
+        )
 
-    wandb.init(
+    run = wandb.init(
         project="introduction_to_world_model",
     )
     wandb.watch(agent.vision_model, log_freq=10)
@@ -114,7 +116,7 @@ def train_vision_model(
 
                 progress.update(
                     episode_task,
-                    completed=round(current_step/n_steps*n_epochs, 3),
+                    completed=round(current_step / n_steps * n_epochs, 3),
                     loss_info=(
                         f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
                         f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
@@ -138,7 +140,10 @@ def train_vision_model(
     if save_path is not None:
         agent.save_checkpoint(save_path, vision_optimizer=optimizer)
 
+    run.finish()
+
     return optimizer
+
 
 if __name__ == "__main__":
     env = Env()
