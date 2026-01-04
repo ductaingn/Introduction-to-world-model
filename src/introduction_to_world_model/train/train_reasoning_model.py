@@ -78,7 +78,7 @@ def train_reasoning_model(
     load_path: str | None = None,
 ):
     run = wandb.init(
-        project="introduction_to_world_model",
+        project="introduction_to_world_model", name="train reasoning model"
     )
     wandb.watch(agent.reasoning_model, log_freq=10)
 

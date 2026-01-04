@@ -20,7 +20,7 @@ class ConvVAE(nn.Module):
         self,
         obs_space: gym.spaces.Box,
         latent_dim: int,
-        hidden_dims: List = [32, 64, 128, 256],
+        hidden_dims: List = [32, 64, 128, 256, 256],
         *args,
         **kwargs,
     ) -> None:
@@ -198,8 +198,9 @@ class ConvVAE(nn.Module):
 
 if __name__ == "__main__":
     from torchsummary import summary
+
     device = "cuda:0"
-    
+
     obs_space = gym.spaces.Box(
         low=np.zeros(shape=(128, 128, 3)), high=np.ones(shape=(128, 128, 3))
     )
@@ -211,3 +212,4 @@ if __name__ == "__main__":
 
     print(sample.shape)
     summary(conv_vae, obs)
+

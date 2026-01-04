@@ -80,6 +80,6 @@ if __name__ == "__main__":
     env = Env(render_mode="rgb_array")
 
     agent = WorldModel(env.observation_space, env.action_space)
-    agent.load_checkpoint("checkpoint/trained_vision_model.pt")
+    agent.load_checkpoint("checkpoint/trained_world_model.pt")
 
     validate_vision_model(agent, 10, ValidateMode.ID, env=env)

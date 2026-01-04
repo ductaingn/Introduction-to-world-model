@@ -32,9 +32,7 @@ def train_vision_model(
             "Agent replay buffer is empty! You must collect data first! Hint: Use <WorldModel>.collect_data(<env>)."
         )
 
-    run = wandb.init(
-        project="introduction_to_world_model",
-    )
+    run = wandb.init(project="introduction_to_world_model", name="train vision model")
     wandb.watch(agent.vision_model, log_freq=10)
 
     optimizer = AdamW(agent.vision_model.parameters(), lr=learning_rate)
@@ -155,8 +153,8 @@ if __name__ == "__main__":
 
     train_vision_model(
         agent,
-        20,
-        batch_size=256,
+        40,
+        batch_size=512,
         learning_rate=1e-4,
         device="cuda:0",
         save_path="checkpoint/trained_vision_model.pt",
