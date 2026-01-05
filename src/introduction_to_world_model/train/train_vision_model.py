@@ -14,7 +14,9 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from introduction_to_world_model.model import world_model
 from introduction_to_world_model.model.world_model import WorldModel
+from introduction_to_world_model.model.nn.vision_model import VAE, VQVAE
 from introduction_to_world_model.env.env import Env
 
 
@@ -63,18 +65,20 @@ def train_vision_model(
         TimeElapsedColumn(),
         TextColumn("{task.fields[loss_info]}"),
     ) as progress:
+        if isinstance(agent.vision_model, VAE):
+            loss_info = "[yellow]Episode Total Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --"
+        else:
+            loss_info = (
+                "[yellow]Episode Total Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]VQ Loss: --",
+            )
         episode_task = progress.add_task(
-            "[green]Episode",
-            total=n_epochs,
-            loss_info="[yellow]Episode Total Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --",
+            "[green]Episode", total=n_epochs, loss_info=loss_info
         )
 
         print("Training vision model...")
         for ep in range(n_epochs):
             step_task = progress.add_task(
-                "[cyan]Step",
-                total=n_steps_per_epoch,
-                loss_info="[yellow]Loss: -- | [cyan]Reconstruction Loss: -- | [magenta]KL Divergence Loss: --",
+                "[cyan]Step", total=n_steps_per_epoch, loss_info=loss_info
             )
             for step in range(n_steps_per_epoch):
                 batch_indices = np.random.choice(
@@ -83,55 +87,106 @@ def train_vision_model(
                 batch = agent.replay_buffer.get_batch(batch_indices)
                 obs_img = batch[0]
                 obs_img = torch.tensor(obs_img).to(device)
-
-                reconstructed_obs_img, mu, log_var = agent.vision_model.forward(obs_img)
-
                 current_step = ep * n_steps_per_epoch + step
-                beta = min(beta_max, beta_max * current_step / warmup_steps)
-                loss, recons_loss, kl_loss = agent.vision_model.calculate_loss(
-                    obs_img, reconstructed_obs_img, mu, log_var, beta
-                )
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                if isinstance(agent.vision_model, VAE):
+                    reconstructed_obs_img, mu, log_var = agent.vision_model.forward(
+                        obs_img
+                    )
+                    beta = min(beta_max, beta_max * current_step / warmup_steps)
+                    loss, recons_loss, kl_loss = agent.vision_model.calculate_loss(
+                        obs_img, reconstructed_obs_img, mu, log_var, beta
+                    )
 
-                current_loss = loss.item()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
 
-                ep_sum_losses[ep]["Loss"] += current_loss
-                ep_sum_losses[ep]["Reconstruction Loss"] += recons_loss.item()
-                ep_sum_losses[ep]["KL Divergence Loss"] += kl_loss.item()
+                    current_loss = loss.item()
 
-                progress.update(
-                    step_task,
-                    advance=1,
-                    loss_info=(
-                        f"[yellow]Loss: {current_loss:.3f} | "
-                        f"[cyan]Reconstruction Loss: {recons_loss.item():.3f} | "
-                        f"[magenta]KL Divergence Loss: {kl_loss.item():.3f} | "
-                    ),
-                )
+                    ep_sum_losses[ep]["Loss"] += current_loss
+                    ep_sum_losses[ep]["Reconstruction Loss"] += recons_loss.item()
+                    ep_sum_losses[ep]["KL Divergence Loss"] += kl_loss.item()
 
-                progress.update(
-                    episode_task,
-                    completed=round(current_step / n_steps * n_epochs, 3),
-                    loss_info=(
-                        f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
-                        f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
-                        f"[magenta]KL Divergence Loss: {ep_sum_losses[ep]['KL Divergence Loss']:.3f} | "
-                    ),
-                )
+                    progress.update(
+                        step_task,
+                        advance=1,
+                        loss_info=(
+                            f"[yellow]Loss: {current_loss:.3f} | "
+                            f"[cyan]Reconstruction Loss: {recons_loss.item():.3f} | "
+                            f"[magenta]KL Divergence Loss: {kl_loss.item():.3f} | "
+                        ),
+                    )
 
-                wandb.log(
-                    {
-                        "Loss": current_loss,
-                        "Reconstruction Loss": recons_loss.item(),
-                        "KL Divergence Loss": kl_loss.item(),
-                        "Mean absolute Mu": mu.detach().abs().mean().item(),
-                        "Mean absolute LogVar": log_var.detach().abs().mean().item(),
-                        "Beta": beta,
-                    }
-                )
+                    progress.update(
+                        episode_task,
+                        completed=round(current_step / n_steps * n_epochs, 3),
+                        loss_info=(
+                            f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
+                            f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
+                            f"[magenta]KL Divergence Loss: {ep_sum_losses[ep]['KL Divergence Loss']:.3f} | "
+                        ),
+                    )
+
+                    wandb.log(
+                        {
+                            "Loss": current_loss,
+                            "Reconstruction Loss": recons_loss.item(),
+                            "KL Divergence Loss": kl_loss.item(),
+                            "Mean absolute Mu": mu.detach().abs().mean().item(),
+                            "Mean absolute LogVar": log_var.detach()
+                            .abs()
+                            .mean()
+                            .item(),
+                            "Beta": beta,
+                        }
+                    )
+
+                elif isinstance(agent.vision_model, VQVAE):
+                    reconstructed_obs_img, vq_loss = agent.vision_model.forward(obs_img)
+                    loss, recons_loss, vq_loss = agent.vision_model.calculate_loss(
+                        obs_img, reconstructed_obs_img, vq_loss
+                    )
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                    current_loss = loss.item()
+
+                    ep_sum_losses[ep]["Loss"] += current_loss
+                    ep_sum_losses[ep]["Reconstruction Loss"] += recons_loss.item()
+                    ep_sum_losses[ep]["VQ Loss"] += vq_loss.item()
+
+                    progress.update(
+                        step_task,
+                        advance=1,
+                        loss_info=(
+                            f"[yellow]Loss: {current_loss:.3f} | "
+                            f"[cyan]Reconstruction Loss: {recons_loss.item():.3f} | "
+                            f"[magenta]VQ Loss: {vq_loss.item():.3f} | "
+                        ),
+                    )
+
+                    progress.update(
+                        episode_task,
+                        completed=round(current_step / n_steps * n_epochs, 3),
+                        loss_info=(
+                            f"[yellow]Episode Total Loss: {ep_sum_losses[ep]['Loss']:.3f} | "
+                            f"[cyan]Reconstruction Loss: {ep_sum_losses[ep]['Reconstruction Loss']:.3f} | "
+                            f"[magenta]VQ Loss: {ep_sum_losses[ep]['VQ Loss']:.3f} | "
+                        ),
+                    )
+
+                    wandb.log(
+                        {
+                            "Loss": current_loss,
+                            "Reconstruction Loss": recons_loss.item(),
+                            "VQ Loss": vq_loss.item(),
+                        }
+                    )
+                else:
+                    raise NotImplementedError
 
             progress.remove_task(step_task)
 

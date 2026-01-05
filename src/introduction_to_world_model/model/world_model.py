@@ -28,7 +28,7 @@ class WorldModel:
     replay_buffer_size: int = 10000
     latent_dim: int = 64
     rollout_time_length: int = 512
-    vision_model: VAE = attrs.field(init=False)
+    vision_model: VAE | VQVAE = attrs.field(init=False)
     reasoning_model: MDNRNN = attrs.field(init=False)
     policy_model: PolicyNetwork = attrs.field(init=False)
     replay_buffer: ReplayBuffer = attrs.field(init=False)
