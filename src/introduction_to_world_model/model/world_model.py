@@ -17,7 +17,7 @@ from rich.progress import (
 )
 from .nn.policy_model import PolicyNetwork
 from .nn.reasoning_model import MDNRNN
-from .nn.vision_model import ConvVAE
+from .nn.vision_model import VAE, VQVAE
 from .utils.replay_buffer import ReplayBuffer
 
 
@@ -28,14 +28,16 @@ class WorldModel:
     replay_buffer_size: int = 10000
     latent_dim: int = 64
     rollout_time_length: int = 512
-    vision_model: ConvVAE = attrs.field(init=False)
+    vision_model: VAE = attrs.field(init=False)
     reasoning_model: MDNRNN = attrs.field(init=False)
     policy_model: PolicyNetwork = attrs.field(init=False)
     replay_buffer: ReplayBuffer = attrs.field(init=False)
 
     def __attrs_post_init__(self):
-        self.vision_model = ConvVAE(self.observation_space, latent_dim=self.latent_dim)
-        self.reasoning_model = MDNRNN(self.action_space, self.vision_model.latent_dim, self.rollout_time_length)
+        self.vision_model = VQVAE(self.observation_space, latent_dim=self.latent_dim)
+        self.reasoning_model = MDNRNN(
+            self.action_space, self.vision_model.latent_dim, self.rollout_time_length
+        )
         self.policy_model = PolicyNetwork(
             self.vision_model.latent_dim,
             self.reasoning_model.hidden_size,
