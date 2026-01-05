@@ -46,10 +46,16 @@ def train_vision_model(
     agent.train(False)
     agent.vision_model.train(True)
 
-    ep_sum_losses = [
-        {"Loss": 0.0, "Reconstruction Loss": 0.0, "KL Divergence Loss": 0.0}
-        for _ in range(n_epochs)
-    ]
+    if isinstance(agent.vision_model, VAE):
+        ep_sum_losses = [
+            {"Loss": 0.0, "Reconstruction Loss": 0.0, "KL Divergence Loss": 0.0}
+            for _ in range(n_epochs)
+        ]
+    else:
+        ep_sum_losses = [
+            {"Loss": 0.0, "Reconstruction Loss": 0.0, "VQ Loss": 0.0}
+            for _ in range(n_epochs)
+        ]
 
     n_steps_per_epoch = len(agent.replay_buffer) // batch_size
     n_steps = n_steps_per_epoch * n_epochs
