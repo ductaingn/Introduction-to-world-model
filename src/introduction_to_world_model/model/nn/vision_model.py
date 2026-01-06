@@ -257,7 +257,7 @@ class VQVAE(nn.Module):
         obs_space: gym.spaces.Box,
         latent_dim: int,
         n_embeddings: int = 512,
-        hidden_dims: List = [32, 64, 128, 256, 256],
+        hidden_dims: List = [32, 64, 128, 256],
         beta: float = 0.25,
         *args,
         **kwargs,
@@ -442,9 +442,7 @@ class VQVAE(nn.Module):
         reconstructed_img: torch.Tensor,
         vq_loss: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        reconstruction_loss = torch.sum(
-            (reconstructed_img - obs) ** 2, dim=[1, 2, 3]
-        ).mean()
+        reconstruction_loss = torch.sum((reconstructed_img - obs) ** 2).mean()
 
         loss = reconstruction_loss + vq_loss
 
