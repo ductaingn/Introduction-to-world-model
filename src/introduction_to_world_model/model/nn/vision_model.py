@@ -206,7 +206,7 @@ class VectorQuantizer(nn.Module):
         self.beta = beta
 
         self.embedding = nn.Embedding(self.K, self.D)
-        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+        self.embedding.weight.data.uniform_(-1 / self.D, 1 / self.D)
 
     def forward(self, latents: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         latents = latents.permute(0, 2, 3, 1).contiguous()
@@ -233,6 +233,94 @@ class VectorQuantizer(nn.Module):
 
         vq_loss = commitment_loss * self.beta + embedding_loss
 
+        quantized_latents = latents + (quantized_latents - latents).detach()
+
+        return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss
+
+
+class VectorQuantizerEMA(nn.Module):
+    def __init__(
+        self,
+        n_embeddings: int,
+        embedding_dim: int,
+        beta: float,
+        decay: float = 0.99,
+        epsilon: float = 1e-5,
+    ) -> None:
+        super().__init__()
+        self.K = n_embeddings
+        self.D = embedding_dim
+        self.beta = beta
+        self.decay = decay
+        self.epsilon = epsilon
+
+        # Initialize embeddings
+        self.embedding = nn.Embedding(self.K, self.D)
+        self.embedding.weight.data.normal_()
+
+        # EMA buffers: these are not trained by the optimizer
+        self.register_buffer("_ema_cluster_size", torch.zeros(self.K))
+        self.ema_w = nn.Parameter(torch.Tensor(self.K, self.D))
+        self.ema_w.data.copy_(self.embedding.weight.data)
+
+    def forward(self, latents: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # B, C, H, W -> B, H, W, C
+        latents = latents.permute(0, 2, 3, 1).contiguous()
+        latents_shape = latents.shape
+        flat_latents = latents.view(-1, self.D)
+
+        # Distance calculation: (a-b)^2 = a^2 + b^2 - 2ab
+        dist = (
+            torch.sum(flat_latents**2, dim=1, keepdim=True)
+            + torch.sum(self.embedding.weight**2, dim=1)
+            - 2 * torch.matmul(flat_latents, self.embedding.weight.t())
+        )
+
+        # Find nearest indices
+        encoding_inds = torch.argmin(dist, dim=1).unsqueeze(1)
+
+        # Create one-hot encodings
+        device = latents.device
+        encoding_one_hot = torch.zeros(encoding_inds.size(0), self.K, device=device)
+        encoding_one_hot.scatter_(1, encoding_inds, 1)
+
+        # Quantize
+        quantized_latents = torch.matmul(encoding_one_hot, self.embedding.weight)
+        quantized_latents = quantized_latents.view(latents_shape)
+
+        # --- EMA Update Logic ---
+        if self.training:
+            # 1. Update cluster size (how many latents chose each embedding)
+            # Use data-parallel safe sums if necessary
+            current_cluster_size = torch.sum(encoding_one_hot, 0)
+            self._ema_cluster_size.mul_(self.decay).add_(
+                current_cluster_size, alpha=1 - self.decay
+            )
+
+            # 2. Laplace smoothing for cluster size (prevents division by zero)
+            n = torch.sum(self._ema_cluster_size)
+            smoothed_cluster_size = (
+                (self._ema_cluster_size + self.epsilon)
+                / (n + self.K * self.epsilon)
+                * n
+            )
+
+            # 3. Update embedding weight sums
+            dw = torch.matmul(encoding_one_hot.t(), flat_latents)
+            self.ema_w.data.mul_(self.decay).add_(dw.data, alpha=1 - self.decay)
+
+            # 4. Re-normalize: New Weights = Sum / Size
+            self.embedding.weight.data.copy_(
+                self.ema_w / smoothed_cluster_size.unsqueeze(1)
+            )
+
+        # --- Loss Calculation ---
+        # With EMA, we only use Commitment Loss (beta).
+        # The codebook update is handled above, so embedding_loss is no longer needed.
+        commitment_loss = F.mse_loss(quantized_latents.detach(), latents)
+        vq_loss = commitment_loss * self.beta
+
+        # Straight-Through Estimator
         quantized_latents = latents + (quantized_latents - latents).detach()
 
         return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss
@@ -287,6 +375,7 @@ class VQVAE(nn.Module):
                         stride=stride,
                         padding=padding,
                     ),
+                    nn.BatchNorm2d(hidden_dim),
                     nn.LeakyReLU(),
                 )
             )
@@ -331,7 +420,7 @@ class VQVAE(nn.Module):
         self.encoder_last_conv_shape = output_shape.copy()
         self.encoder = nn.Sequential(*modules)
 
-        self.vq_layer = VectorQuantizer(n_embeddings, latent_dim, beta)
+        self.vq_layer = VectorQuantizerEMA(n_embeddings, latent_dim, beta)
 
         # Build decoder
         modules: List[nn.Module] = []
@@ -360,6 +449,7 @@ class VQVAE(nn.Module):
                         stride=stride,
                         padding=padding,
                     ),
+                    nn.BatchNorm2d(hidden_dims[i + 1]),
                     nn.LeakyReLU(),
                 )
             )
@@ -407,15 +497,6 @@ class VQVAE(nn.Module):
 
         return output
 
-    def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
-        """
-        Parameters
-        """
-        std = torch.exp(0.5 * log_var)
-        distr = Normal(loc=mu, scale=std)
-
-        return distr.rsample()
-
     def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         encoding = self.encode(obs)
         quantized_inputs, vq_loss = self.vq_layer(encoding)
@@ -442,7 +523,7 @@ class VQVAE(nn.Module):
         reconstructed_img: torch.Tensor,
         vq_loss: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        reconstruction_loss = torch.sum((reconstructed_img - obs) ** 2).mean()
+        reconstruction_loss = F.mse_loss(reconstructed_img, obs)
 
         loss = reconstruction_loss + vq_loss
 

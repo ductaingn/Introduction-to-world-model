@@ -26,7 +26,7 @@ class WorldModel:
     observation_space: gym.spaces.Box
     action_space: gym.spaces.Discrete
     replay_buffer_size: int = 10000
-    latent_dim: int = 64
+    latent_dim: int = 128
     rollout_time_length: int = 512
     vision_model: VAE | VQVAE = attrs.field(init=False)
     reasoning_model: MDNRNN = attrs.field(init=False)
@@ -92,6 +92,7 @@ class WorldModel:
     def save_checkpoint(
         self,
         path: str | Path,
+        save_replay_buffer: bool = False,
         *,
         vision_optimizer: torch.optim.Optimizer | None = None,
         reasoning_optimizer: torch.optim.Optimizer | None = None,
@@ -102,15 +103,20 @@ class WorldModel:
             "reasoning_model": self.reasoning_model.state_dict(),
             "policy_model": self.policy_model.state_dict(),
             "replay_buffer_size": self.replay_buffer_size,
-            "replay_buffer": {
-                "obs": list(self.replay_buffer.obs),
-                "next_obs": list(self.replay_buffer.next_obs),
-                "act": list(self.replay_buffer.act),
-                "reward": list(self.replay_buffer.reward),
-                "terminated": list(self.replay_buffer.terminated),
-                "truncated": list(self.replay_buffer.truncated),
-            },
         }
+        if save_replay_buffer:
+            checkpoint.update(
+                {
+                    "replay_buffer": {
+                        "obs": list(self.replay_buffer.obs),
+                        "next_obs": list(self.replay_buffer.next_obs),
+                        "act": list(self.replay_buffer.act),
+                        "reward": list(self.replay_buffer.reward),
+                        "terminated": list(self.replay_buffer.terminated),
+                        "truncated": list(self.replay_buffer.truncated),
+                    }
+                }
+            )
 
         if vision_optimizer is not None:
             checkpoint["vision_optimizer"] = vision_optimizer.state_dict()
@@ -138,6 +144,7 @@ class WorldModel:
         load_vision_model: bool = True,
         load_reasoning_model: bool = True,
         load_policy_model: bool = True,
+        load_replay_buffer: bool = False,
         vision_optimizer: torch.optim.Optimizer | None = None,
         reasoning_optimizer: torch.optim.Optimizer | None = None,
         policy_optimizer: torch.optim.Optimizer | None = None,
@@ -165,30 +172,31 @@ class WorldModel:
             print("Loading policy model...")
             self.policy_model.load_state_dict(checkpoint["policy_model"])
             print("Policy model loaded!")
-
+ 
         # ---- replay buffer ----
-        self.replay_buffer_size = checkpoint["replay_buffer_size"]
-        self.replay_buffer = ReplayBuffer(self.replay_buffer_size)
+        if load_replay_buffer:
+            print("Loading replay buffer...")
+            self.replay_buffer_size = checkpoint["replay_buffer_size"]
+            self.replay_buffer = ReplayBuffer(self.replay_buffer_size)
 
-        print("Loading replay buffer...")
-        rb = checkpoint["replay_buffer"]
-        for obs, next_obs, act, reward, terminated, truncated in zip(
-            rb["obs"],
-            rb["next_obs"],
-            rb["act"],
-            rb["reward"],
-            rb["terminated"],
-            rb["truncated"],
-        ):
-            self.replay_buffer.add(
-                obs,
-                next_obs,
-                act,
-                reward,
-                terminated,
-                truncated,
-            )
-        print(f"Replay buffer loaded!\nBuffer length: {len(self.replay_buffer)}")
+            rb = checkpoint["replay_buffer"]
+            for obs, next_obs, act, reward, terminated, truncated in zip(
+                rb["obs"],
+                rb["next_obs"],
+                rb["act"],
+                rb["reward"],
+                rb["terminated"],
+                rb["truncated"],
+            ):
+                self.replay_buffer.add(
+                    obs,
+                    next_obs,
+                    act,
+                    reward,
+                    terminated,
+                    truncated,
+                )
+            print(f"Replay buffer loaded!\nBuffer length: {len(self.replay_buffer)}")
 
         # ---- optimizers ----
         print("Loading optimizers...")

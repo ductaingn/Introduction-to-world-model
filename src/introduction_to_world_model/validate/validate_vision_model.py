@@ -7,6 +7,7 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 
 from introduction_to_world_model.model.world_model import WorldModel
+from introduction_to_world_model.model.nn.vision_model import VAE, VQVAE
 from introduction_to_world_model.env.env import Env
 from introduction_to_world_model.validate import ValidateMode
 
@@ -41,13 +42,17 @@ def validate_vision_model(
 
     for idx, img in enumerate(obs):
         with torch.no_grad():
-            reconstructed_img, mu, log_std = agent.vision_model.forward(
-                img.unsqueeze(0)
-            )
+            if isinstance(agent.vision_model, VAE):
+                reconstructed_img, mu, log_std = agent.vision_model.forward(
+                    img.unsqueeze(0)
+                )
 
-            print(
-                f"Mean Mu: {mu.squeeze(0).mean().numpy()}\nMean LogVar: {log_std.squeeze(0).mean().numpy()}"
-            )
+                print(
+                    f"Mean Mu: {mu.squeeze(0).mean().numpy()}\nMean LogVar: {log_std.squeeze(0).mean().numpy()}"
+                )
+            elif isinstance(agent.vision_model, VQVAE):
+                reconstructed_img, _ = agent.vision_model.forward(img.unsqueeze(0))
+
             print(
                 f"Reconstruction diff: {torch.nn.functional.mse_loss(reconstructed_img.squeeze(0), img).numpy():.3f}"
             )
@@ -80,6 +85,6 @@ if __name__ == "__main__":
     env = Env(render_mode="rgb_array")
 
     agent = WorldModel(env.observation_space, env.action_space)
-    agent.load_checkpoint("checkpoint/trained_world_model.pt")
+    agent.load_checkpoint("checkpoint/trained_vision_model.pt")
 
-    validate_vision_model(agent, 10, ValidateMode.ID, env=env)
+    validate_vision_model(agent, 10, ValidateMode.OOD, env=env)
